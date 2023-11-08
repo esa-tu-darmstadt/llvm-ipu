@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file defines LLVM's set of calling conventions.
@@ -245,7 +247,12 @@ namespace CallingConv {
     /// placement. Preserves active lane values for input VGPRs.
     AMDGPU_CS_ChainPreserve = 105,
 
-    /// The highest possible ID. Must be some 2^k - 1.
+    /// IPU local patch begin
+    /// \brief The CC used for vertex functions on Colossus devices.
+    Colossus_Vertex = 106,
+    /// IPU local patch end
+
+    /// The highest possible calling convention ID. Must be some 2^k - 1.
     MaxID = 1023
   };
 

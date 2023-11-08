@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 
 #include "Writer.h"
@@ -1921,11 +1923,22 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     // This responsible for splitting up .eh_frame section into
     // pieces. The relocation scan uses those pieces, so this has to be
     // earlier.
-    {
-      llvm::TimeTraceScope timeScope("Finalize .eh_frame");
+  {
+    llvm::TimeTraceScope timeScope("Finalize .eh_frame");
+    // This responsible for splitting up .eh_frame section into
+    // pieces. The relocation scan uses those pieces, so this has to be
+    // earlier.
+    // IPU local patch begin
+    if (!config->relocatable) {
+      // The relocatable guard is added as eh_frame is incompatible with
+      // a relocatable link but is sometimes added by default
+      // Patch to get relocatable links working for poplar
+      //finalizeSynthetic(In.EhFrame);
       for (Partition &part : partitions)
         finalizeSynthetic(part.ehFrame.get());
     }
+    // IPU local patch end
+  }
 
     if (config->hasDynSymTab) {
       parallelForEach(symtab.getSymbols(), [](Symbol *sym) {

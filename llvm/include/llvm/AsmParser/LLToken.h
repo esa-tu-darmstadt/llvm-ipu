@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file defines the enums for the .ll lexer.
@@ -174,6 +176,9 @@ enum Kind {
   kw_amdgpu_cs_chain_preserve,
   kw_amdgpu_kernel,
   kw_amdgpu_gfx,
+  // IPU local patch begin
+  kw_colossus_vertex,
+  // IPU local patch end
   kw_tailcc,
 
   // Attributes:

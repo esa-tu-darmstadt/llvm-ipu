@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 ///
 /// \file
@@ -1267,6 +1269,9 @@ const EnumEntry<unsigned> ElfMachineType[] = {
   ENUM_ENT(EM_BPF,           "EM_BPF"),
   ENUM_ENT(EM_VE,            "NEC SX-Aurora Vector Engine"),
   ENUM_ENT(EM_LOONGARCH,     "LoongArch"),
+  // IPU local patch begin
+  ENUM_ENT(EM_GRAPHCORE_IPU, "Graphcore IPU"),
+  // IPU local patch end
 };
 
 const EnumEntry<unsigned> ElfSymbolBindings[] = {
@@ -1778,6 +1783,14 @@ static const char *getElfMipsOptionsOdkType(unsigned Odk) {
     return "Unknown";
   }
 }
+
+// IPU local patch begin
+static const EnumEntry<unsigned> ElfHeaderGraphcoreFlags[] = {
+    ENUM_ENT(EF_GRAPHCORE_ARCH_IPU1, "ipu1"),
+    ENUM_ENT(EF_GRAPHCORE_ARCH_IPU2, "ipu2"),
+    ENUM_ENT(EF_GRAPHCORE_ARCH_IPU21, "ipu21"),
+};
+// IPU local patch end
 
 template <typename ELFT>
 std::pair<const typename ELFT::Phdr *, const typename ELFT::Shdr *>
@@ -3609,6 +3622,11 @@ template <class ELFT> void GNUELFDumper<ELFT>::printFileHeaders() {
   else if (e.e_machine == EM_XTENSA)
     ElfFlags = printFlags(e.e_flags, ArrayRef(ElfHeaderXtensaFlags),
                           unsigned(ELF::EF_XTENSA_MACH));
+  // IPU local patch begin
+  else if (e.e_machine == EM_GRAPHCORE_IPU)
+    ElfFlags = printFlags(e.e_flags, makeArrayRef(ElfHeaderGraphcoreFlags),
+                          unsigned(ELF::EF_GRAPHCORE_ARCH));
+  // IPU local patch end
   Str = "0x" + utohexstr(e.e_flags);
   if (!ElfFlags.empty())
     Str = Str + ", " + ElfFlags;
@@ -6876,6 +6894,11 @@ template <class ELFT> void LLVMELFDumper<ELFT>::printFileHeaders() {
     else if (E.e_machine == EM_XTENSA)
       W.printFlags("Flags", E.e_flags, ArrayRef(ElfHeaderXtensaFlags),
                    unsigned(ELF::EF_XTENSA_MACH));
+    // IPU local patch begin
+    else if (E.e_machine == EM_GRAPHCORE_IPU)
+      W.printFlags("Flags", E.e_flags, makeArrayRef(ElfHeaderGraphcoreFlags),
+                   unsigned(ELF::EF_GRAPHCORE_ARCH));
+    // IPU local patch end
     else
       W.printFlags("Flags", E.e_flags);
     W.printNumber("HeaderSize", E.e_ehsize);

@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file implements float type expansion and softening for LegalizeTypes.
@@ -108,6 +110,9 @@ void DAGTypeLegalizer::SoftenFloatResult(SDNode *N, unsigned ResNo) {
     case ISD::FP_EXTEND:   R = SoftenFloatRes_FP_EXTEND(N); break;
     case ISD::STRICT_FP_ROUND:
     case ISD::FP_ROUND:    R = SoftenFloatRes_FP_ROUND(N); break;
+    // IPU local patch begin
+    case ISD::STRICT_FP16_TO_FP:
+    // IPU local patch end
     case ISD::FP16_TO_FP:  R = SoftenFloatRes_FP16_TO_FP(N); break;
     case ISD::BF16_TO_FP:  R = SoftenFloatRes_BF16_TO_FP(N); break;
     case ISD::STRICT_FPOW:
@@ -561,15 +566,23 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_FP_EXTEND(SDNode *N) {
 // FIXME: Should we just use 'normal' FP_EXTEND / FP_TRUNC instead of special
 // nodes?
 SDValue DAGTypeLegalizer::SoftenFloatRes_FP16_TO_FP(SDNode *N) {
+  // IPU local patch begin
+  bool const IsStrict = N->isStrictFPOpcode();
   EVT MidVT = TLI.getTypeToTransformTo(*DAG.getContext(), MVT::f32);
-  SDValue Op = N->getOperand(0);
+  SDValue Op = N->getOperand(IsStrict ? 1 : 0);
+  SDValue Chain = IsStrict ? N->getOperand(0) : SDValue();
   TargetLowering::MakeLibCallOptions CallOptions;
   EVT OpsVT[1] = { N->getOperand(0).getValueType() };
   CallOptions.setTypeListBeforeSoften(OpsVT, N->getValueType(0), true);
   SDValue Res32 = TLI.makeLibCall(DAG, RTLIB::FPEXT_F16_F32, MidVT, Op,
-                                  CallOptions, SDLoc(N)).first;
-  if (N->getValueType(0) == MVT::f32)
+                                  CallOptions, SDLoc(N), Chain)
+                      .first;
+  Chain = Res32.getValue(1);
+  if (N->getValueType(0) == MVT::f32) {
+    if (IsStrict)
+      ReplaceValueWith(SDValue(N, 1), Chain);
     return Res32;
+  }
 
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), N->getValueType(0));
   RTLIB::Libcall LC = RTLIB::getFPEXT(MVT::f32, N->getValueType(0));
@@ -2760,9 +2773,15 @@ void DAGTypeLegalizer::SoftPromoteHalfResult(SDNode *N, unsigned ResNo) {
   case ISD::FADD:
   case ISD::FDIV:
   case ISD::FMAXIMUM:
+  // IPU local patch begin
+  case ISD::STRICT_FMAXIMUM:
   case ISD::FMINIMUM:
+  case ISD::STRICT_FMINIMUM:
   case ISD::FMAXNUM:
+  case ISD::STRICT_FMAXNUM:
   case ISD::FMINNUM:
+  case ISD::STRICT_FMINNUM:
+  // IPU local patch end
   case ISD::FMUL:
   case ISD::FPOW:
   case ISD::FREM:
@@ -2985,7 +3004,7 @@ SDValue DAGTypeLegalizer::SoftPromoteHalfRes_BinOp(SDNode *N) {
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), OVT);
   SDValue Op0 = GetSoftPromotedHalf(N->getOperand(0));
   SDValue Op1 = GetSoftPromotedHalf(N->getOperand(1));
-  SDLoc dl(N);
+  // IPU local patch end
 
   // Promote to the larger FP type.
   auto PromotionOpcode = GetPromotionOpcode(OVT, NVT);
@@ -3048,6 +3067,10 @@ bool DAGTypeLegalizer::SoftPromoteHalfOperand(SDNode *N, unsigned OpNo) {
   case ISD::STRICT_FP_EXTEND:
   case ISD::FP_EXTEND:  Res = SoftPromoteHalfOp_FP_EXTEND(N); break;
   case ISD::SELECT_CC:  Res = SoftPromoteHalfOp_SELECT_CC(N, OpNo); break;
+  // IPU local patch begin
+  case ISD::STRICT_FSETCC:
+  case ISD::STRICT_FSETCCS:
+  // IPU local patch end
   case ISD::SETCC:      Res = SoftPromoteHalfOp_SETCC(N); break;
   case ISD::STORE:      Res = SoftPromoteHalfOp_STORE(N, OpNo); break;
   case ISD::STACKMAP:
@@ -3166,9 +3189,13 @@ SDValue DAGTypeLegalizer::SoftPromoteHalfOp_SELECT_CC(SDNode *N,
 }
 
 SDValue DAGTypeLegalizer::SoftPromoteHalfOp_SETCC(SDNode *N) {
-  SDValue Op0 = N->getOperand(0);
-  SDValue Op1 = N->getOperand(1);
-  ISD::CondCode CCCode = cast<CondCodeSDNode>(N->getOperand(2))->get();
+  // IPU local patch begin
+  bool const IsStrict = N->isStrictFPOpcode();
+  SDValue Op0 = N->getOperand(IsStrict ? 1 : 0);
+  SDValue Op1 = N->getOperand(IsStrict ? 2 : 1);
+  ISD::CondCode CCCode =
+      cast<CondCodeSDNode>(N->getOperand(IsStrict ? 3 : 2))->get();
+  // IPU local patch end
   SDLoc dl(N);
 
   EVT SVT = Op0.getValueType();

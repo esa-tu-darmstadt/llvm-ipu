@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 //
 // This file implements integer type expansion and promotion for LegalizeTypes.
@@ -162,8 +164,12 @@ void DAGTypeLegalizer::PromoteIntegerResult(SDNode *N, unsigned ResNo) {
   case ISD::FP_TO_UINT_SAT:
                          Res = PromoteIntRes_FP_TO_XINT_SAT(N); break;
 
+
   case ISD::FP_TO_BF16:
   case ISD::FP_TO_FP16:
+  // IPU local patch begin
+  case ISD::STRICT_FP_TO_FP16:
+  // IPU local patch end
     Res = PromoteIntRes_FP_TO_FP16_BF16(N);
     break;
 
@@ -780,6 +786,15 @@ SDValue DAGTypeLegalizer::PromoteIntRes_FP_TO_FP16_BF16(SDNode *N) {
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), N->getValueType(0));
   SDLoc dl(N);
 
+  // IPU local patch begin
+  if (N->isStrictFPOpcode()) {
+    SDValue Res =
+        DAG.getNode(N->getOpcode(), dl, DAG.getVTList(NVT, MVT::Other),
+                    N->getOperand(0), N->getOperand(1));
+    ReplaceValueWith(SDValue(N, 1), Res.getValue(1));
+    return Res;
+  }
+  // IPU local patch end
   return DAG.getNode(N->getOpcode(), dl, NVT, N->getOperand(0));
 }
 
@@ -1795,6 +1810,9 @@ bool DAGTypeLegalizer::PromoteIntegerOperand(SDNode *N, unsigned OpNo) {
   case ISD::FP16_TO_FP:
   case ISD::VP_UINT_TO_FP:
   case ISD::UINT_TO_FP:   Res = PromoteIntOp_UINT_TO_FP(N); break;
+  // IPU local patch begin
+  case ISD::STRICT_FP16_TO_FP:
+  // IPU local patch end
   case ISD::STRICT_UINT_TO_FP:  Res = PromoteIntOp_STRICT_UINT_TO_FP(N); break;
   case ISD::ZERO_EXTEND:  Res = PromoteIntOp_ZERO_EXTEND(N); break;
   case ISD::VP_ZERO_EXTEND: Res = PromoteIntOp_VP_ZERO_EXTEND(N); break;

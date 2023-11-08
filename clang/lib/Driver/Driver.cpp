@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 
 #include "clang/Driver/Driver.h"
@@ -16,6 +18,9 @@
 #include "ToolChains/CSKYToolChain.h"
 #include "ToolChains/Clang.h"
 #include "ToolChains/CrossWindows.h"
+// IPU local patch begin
+#include "ToolChains/Colossus.h"
+// IPU local patch end
 #include "ToolChains/Cuda.h"
 #include "ToolChains/Darwin.h"
 #include "ToolChains/DragonFly.h"
@@ -6296,6 +6301,11 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       case llvm::Triple::tcele:
         TC = std::make_unique<toolchains::TCELEToolChain>(*this, Target, Args);
         break;
+        // IPU local patch begin
+      case llvm::Triple::colossus:
+        TC = std::make_unique<toolchains::ColossusToolChain>(*this, Target, Args);
+        break;
+        // IPU local patch end
       case llvm::Triple::hexagon:
         TC = std::make_unique<toolchains::HexagonToolChain>(*this, Target,
                                                              Args);

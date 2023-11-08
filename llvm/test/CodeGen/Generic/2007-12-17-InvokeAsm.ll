@@ -1,7 +1,10 @@
+; This file has been modified by Graphcore Ltd.
 ; RUN: llc -no-integrated-as < %s
 
 ; The test uses inline assembly with x86-specific constraints.
-; UNSUPPORTED: target=nvptx{{.*}}
+; IPU local patch begin
+; UNSUPPORTED: target=nvptx{{.*}} || colossus
+; IPU local patch end
 
 
 define fastcc void @bc__support__high_resolution_time__initialize_clock_rate() personality ptr @__gxx_personality_v0 {

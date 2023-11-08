@@ -1,3 +1,4 @@
+# This file has been modified by Graphcore Ltd.
 include(BuiltinTests)
 include(CheckCSourceCompiles)
 
@@ -33,6 +34,15 @@ asm(\".arch armv8-a+lse\");
 asm(\"cas w0, w1, [x2]\");
 ")
 
+# IPU Local patch begin
+builtin_check_c_compiler_source(COMPILER_RT_HAS_IPU_WORKER_MODE
+"
+#ifdef __SUPERVISOR__
+#error \"Compiling in supervisor mode\"
+#endif
+")
+# IPU Local patch end
+
 if(ANDROID)
   set(OS_NAME "Android")
 else()
@@ -57,6 +67,9 @@ set(SPARCV9 sparcv9)
 set(WASM32 wasm32)
 set(WASM64 wasm64)
 set(VE ve)
+# IPU local patch begin
+set(IPU ipu)
+# IPU local patch end
 
 if(APPLE)
   set(ARM64 arm64 arm64e)
@@ -68,7 +81,9 @@ set(ALL_BUILTIN_SUPPORTED_ARCH
   ${X86} ${X86_64} ${ARM32} ${ARM64} ${AVR}
   ${HEXAGON} ${MIPS32} ${MIPS64} ${PPC32} ${PPC64}
   ${RISCV32} ${RISCV64} ${SPARC} ${SPARCV9}
-  ${WASM32} ${WASM64} ${VE} ${LOONGARCH64})
+# IPU local patch begin
+  ${WASM32} ${WASM64} ${VE} ${IPU} ${LOONGARCH64})
+# IPU local patch end
 
 include(CompilerRTUtils)
 include(CompilerRTDarwinUtils)

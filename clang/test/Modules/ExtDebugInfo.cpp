@@ -1,5 +1,9 @@
+// This file has been modified by Graphcore Ltd.
 // UNSUPPORTED: target={{.*}}-zos{{.*}}, target={{.*}}-aix{{.*}}
 // RUN: rm -rf %t
+// IPU local patch begin
+// UNSUPPORTED: true
+// IPU local patch end
 // Test that only forward declarations are emitted for types defined in modules.
 
 // Modules:

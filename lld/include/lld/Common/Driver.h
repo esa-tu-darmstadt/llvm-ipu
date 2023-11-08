@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef LLD_COMMON_DRIVER_H
@@ -43,6 +45,12 @@ struct Result {
 // by cleanup.
 Result lldMain(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
                llvm::raw_ostream &stderrOS, llvm::ArrayRef<DriverDef> drivers);
+
+// IPU local patch begin
+namespace elf {
+void reset();
+} // namespace elf
+// IPU local patch end
 } // namespace lld
 
 // With this macro, library users must specify which drivers they use, provide

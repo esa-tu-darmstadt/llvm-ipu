@@ -95,6 +95,7 @@ add_clang_library(clangCodeGen
   Targets/ARM.cpp
   Targets/AVR.cpp
   Targets/BPF.cpp
+  Targets/Colossus.cpp
   Targets/CSKY.cpp
   Targets/Hexagon.cpp
   Targets/Lanai.cpp

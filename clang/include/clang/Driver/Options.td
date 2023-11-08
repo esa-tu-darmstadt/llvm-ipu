@@ -4,6 +4,8 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+// This file has been modified by Graphcore Ltd.
+//
 //===----------------------------------------------------------------------===//
 //
 //  This file defines the options accepted by clang.
@@ -201,6 +203,10 @@ def m_riscv_Features_Group : OptionGroup<"<riscv features group>">,
                              Group<m_Group>, DocName<"RISC-V">;
 def m_ve_Features_Group : OptionGroup<"<ve features group>">,
                           Group<m_Group>, DocName<"VE">;
+// IPU local patch begin
+def m_colossus_Features_Group : OptionGroup<"<colossus features group>">,
+                                Group<m_Group>, DocName<"Colossus">;
+// IPU local patch end
 
 def m_libc_Group : OptionGroup<"<m libc group>">, Group<m_mips_Features_Group>,
                    Flags<[HelpHidden]>;
@@ -4640,6 +4646,18 @@ defm tgsplit : SimpleMFlag<"tgsplit", "Enable", "Disable",
 defm wavefrontsize64 : SimpleMFlag<"wavefrontsize64",
   "Specify wavefront size 64", "Specify wavefront size 32",
   " mode (AMDGPU only)">;
+
+// IPU local patch begin
+// Colossus features
+def msupervisor : Flag<["-"], "msupervisor">,
+  Group<m_colossus_Features_Group>;
+def mmax_nops_in_rpt : Joined<["-"], "mmax-nops-in-rpt=">, 
+  Group<m_colossus_Features_Group>,
+  HelpText<"Maximum number of nop/fnop instructon in a rpt loop body">;
+def mnop_threshold_in_rpt : Joined<["-"], "mnop-threshold-in-rpt=">, 
+  Group<m_colossus_Features_Group>,
+  HelpText<"Ratio of nops allowed in rpt loop body from 0 to 1 if the maximum number of nops set by -mmax-nops-in-rpt is exceeded">;
+// IPU local patch end
 
 defm unsafe_fp_atomics : BoolOption<"m", "unsafe-fp-atomics",
   TargetOpts<"AllowAMDGPUUnsafeFPAtomics">, DefaultFalse,

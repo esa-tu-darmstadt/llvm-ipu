@@ -1,3 +1,4 @@
+# This file has been modified by Graphcore Ltd.
 # See docs/CMake.html for instructions about how to build LLVM with CMake.
 
 cmake_minimum_required(VERSION 3.20.0)
@@ -438,6 +439,9 @@ set(LLVM_ALL_TARGETS
   ARM
   AVR
   BPF
+# IPU local patch begin
+  Colossus
+# IPU local patch end
   Hexagon
   Lanai
   LoongArch
@@ -1119,6 +1123,9 @@ endif()
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 include_directories( ${LLVM_INCLUDE_DIR} ${LLVM_MAIN_INCLUDE_DIR})
+# IPU local patch begin
+include_directories(${LLVM_BINARY_DIR}/../../../generated/headers)
+# IPU local patch end
 
 # when crosscompiling import the executable targets from a file
 if(LLVM_USE_HOST_TOOLS)
@@ -1351,3 +1358,15 @@ endif()
 if (LLVM_INCLUDE_UTILS AND LLVM_INCLUDE_TOOLS)
   add_subdirectory(utils/llvm-locstats)
 endif()
+
+# IPU local patch begin
+# Install FileCheck to use externally for testing.
+# Install llvm-lit for convenience.
+install(FILES ${LLVM_TOOLS_BINARY_DIR}/FileCheck
+              ${LLVM_TOOLS_BINARY_DIR}/llvm-lit
+              ${LLVM_TOOLS_BINARY_DIR}/not
+        DESTINATION bin
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                    GROUP_READ GROUP_EXECUTE
+                    WORLD_READ WORLD_EXECUTE)
+# IPU local patch end

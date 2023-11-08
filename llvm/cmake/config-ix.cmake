@@ -1,3 +1,4 @@
+# This file has been modified by Graphcore Ltd.
 if( WIN32 AND NOT CYGWIN )
   # We consider Cygwin as another Unix
   set(PURE_WINDOWS 1)
@@ -513,6 +514,10 @@ elseif (LLVM_NATIVE_ARCH STREQUAL "m68k")
   set(LLVM_NATIVE_ARCH M68k)
 elseif (LLVM_NATIVE_ARCH MATCHES "loongarch")
   set(LLVM_NATIVE_ARCH LoongArch)
+# IPU local patch begin
+elseif (LLVM_NATIVE_ARCH MATCHES "colossus")
+  set(LLVM_NATIVE_ARCH Colossus)
+# IPU local patch end
 else ()
   message(FATAL_ERROR "Unknown architecture ${LLVM_NATIVE_ARCH}")
 endif ()
