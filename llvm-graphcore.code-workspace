@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"cmake.configureArgs": [
+			"-DENABLED_IPU_ARCH_NAMES=ipu1;ipu2;ipu21",
+			"-DLLVM_DEFAULT_TARGET_TRIPLE=colossus-graphcore-unknown-elf",
+			"-DLLVM_ENABLE_PROJECTS=mlir;clang;lld",
+			"-DLLVM_TARGETS_TO_BUILD=X86;Colossus",
+			"-DLLVM_ENABLE_ASSERTIONS=ON",
+			"-DLLVM_CCACHE_BUILD=ON",
+
+			// Uncomment to build the compiler-rt runtime libraries for the IPU
+			// "-DLLVM_ENABLE_RUNTIMES=compiler-rt",
+			// "-DLLVM_RUNTIME_TARGETS=x86_64-unknown-linux-elf;colossus-graphcore-unknown-elf",
+			// "-DLLVM_BUILTIN_TARGETS=x86_64-unknown-linux-elf;colossus-graphcore-unknown-elf",
+
+			"-G=Ninja"
+		],
+		"cmake.sourceDirectory": "${workspaceFolder}/llvm"
+	}
+}
