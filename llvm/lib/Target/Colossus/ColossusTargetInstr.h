@@ -38,7 +38,7 @@
 #define LLVM_LIB_TARGET_COLOSSUS_COLOSSUSTARGETINSTR_H
 
 #include "ColossusSubtarget.h"
-#include "llvm/ADT/Optional.h"
+#include <optional>
 
 namespace llvm {
 
@@ -76,34 +76,34 @@ LLVM_ATTRIBUTE_ALWAYS_INLINE
 unsigned XshrImmBitWidth(ColossusSubtarget const &, unsigned) { return 12; }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getST64(ColossusSubtarget const &) {
-  return llvm::None;
+std::optional<unsigned> getST64(ColossusSubtarget const &) {
+  return {};
   ;
 }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getST128(ColossusSubtarget const &) {
-  return llvm::None;
+std::optional<unsigned> getST128(ColossusSubtarget const &) {
+  return {};
   ;
 }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getLD128(ColossusSubtarget const &) { return llvm::None; }
+std::optional<unsigned> getLD128(ColossusSubtarget const &) { return {}; }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getLD128_ZI(ColossusSubtarget const &) { return llvm::None; }
+std::optional<unsigned> getLD128_ZI(ColossusSubtarget const &) { return {}; }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getLD64(ColossusSubtarget const &) { return llvm::None; }
+std::optional<unsigned> getLD64(ColossusSubtarget const &) { return {}; }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getLD64_ZI(ColossusSubtarget const &) { return llvm::None; }
+std::optional<unsigned> getLD64_ZI(ColossusSubtarget const &) { return {}; }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getBRZDEC(ColossusSubtarget const &) { return llvm::None; }
+std::optional<unsigned> getBRZDEC(ColossusSubtarget const &) { return {}; }
 
 LLVM_ATTRIBUTE_ALWAYS_INLINE
-Optional<unsigned> getST64M(ColossusSubtarget const &CST) { return llvm::None; }
+std::optional<unsigned> getST64M(ColossusSubtarget const &CST) { return {}; }
 
 } // namespace llvm
 #endif // LLVM_LIB_TARGET_COLOSSUS_COLOSSUSTARGETINSTR_H

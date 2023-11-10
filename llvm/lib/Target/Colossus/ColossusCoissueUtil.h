@@ -71,11 +71,11 @@ public:
       bundleWithNextInstr(MachineFunction::iterator,
                           MachineBasicBlock::instr_iterator) const;
 
-  Optional<MachineBasicBlock::instr_iterator>
+  std::optional<MachineBasicBlock::instr_iterator>
       queryNextInstrToBundle(MachineFunction::iterator MFI,
                              MachineBasicBlock::instr_iterator first) const;
 
-  Optional<MachineBasicBlock::instr_iterator>
+  std::optional<MachineBasicBlock::instr_iterator>
       queryNextInstrToBundle(MachineBasicBlock::instr_iterator first,
                              MachineBasicBlock::instr_iterator last) const;
 };

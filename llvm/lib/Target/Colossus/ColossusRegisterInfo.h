@@ -61,7 +61,7 @@ public:
   bool requiresRegisterScavenging(const MachineFunction &MF) const override;
   bool trackLivenessAfterRegAlloc(const MachineFunction &MF) const override;
 
-  void eliminateFrameIndex(MachineBasicBlock::iterator II,
+  bool eliminateFrameIndex(MachineBasicBlock::iterator II,
                            int SPAdj, unsigned FIOperandNum,
                            RegScavenger *RS = nullptr) const override;
 
@@ -71,7 +71,6 @@ public:
   static unsigned getStackRegister();
   static const char *getRegisterName(unsigned Reg);
   bool regsArePair(Register RegLo, Register RegHi) const;
-  bool isConstantPhysReg(MCRegister PhysReg) const override;
 };
 
 } // end namespace llvm

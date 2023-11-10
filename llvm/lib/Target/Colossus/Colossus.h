@@ -61,7 +61,7 @@ namespace llvm {
   };
 
   FunctionPass *createColossusISelDag(ColossusTargetMachine &TM,
-                                   CodeGenOpt::Level OptLevel);
+                                   CodeGenOptLevel OptLevel);
 
   ImmutablePass*
   createColossusTargetTransformInfoPass(const ColossusTargetMachine *TM);

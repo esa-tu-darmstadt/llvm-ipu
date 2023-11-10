@@ -104,14 +104,14 @@ MachineBasicBlock::instr_iterator CoissueUtil::findNextNonMetaInstr(
   return first;
 }
 
-Optional<MachineBasicBlock::instr_iterator> CoissueUtil::queryNextInstrToBundle(
+std::optional<MachineBasicBlock::instr_iterator> CoissueUtil::queryNextInstrToBundle(
   MachineFunction::iterator MFI,
   MachineBasicBlock::instr_iterator first) const {
 
   return queryNextInstrToBundle(first, MFI->instr_end());
 }
 
-Optional<MachineBasicBlock::instr_iterator> CoissueUtil::queryNextInstrToBundle(
+std::optional<MachineBasicBlock::instr_iterator> CoissueUtil::queryNextInstrToBundle(
   MachineBasicBlock::instr_iterator first,
   MachineBasicBlock::instr_iterator last) const {
 

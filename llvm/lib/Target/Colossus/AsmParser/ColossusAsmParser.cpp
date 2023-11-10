@@ -32,6 +32,8 @@
 #include "ColossusAsmParser.h"
 #include "TargetInfo/ColossusTargetInfo.h"
 #include "llvm/MC/MCParser/MCAsmLexer.h"
+#include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCRegister.h"
 
 #define GET_REGISTER_MATCHER
 #define GET_SUBTARGET_FEATURE_NAME
@@ -278,14 +280,14 @@ std::string ColossusAsmParser::getArchString(){
   return "ipu1";
 }
 
-OperandMatchResultTy ColossusAsmParser::tryParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc) {
+ParseStatus ColossusAsmParser::tryParseRegister(MCRegister &MCReg, SMLoc &StartLoc, SMLoc &EndLoc) {
   Register Reg;
   if (tryParseRegister(Reg))
-    return MatchOperand_ParseFail;
-  RegNo = Reg.Num;
+    return ParseStatus::Failure;
+  MCReg = MCRegister::from(Reg.Num) = Reg.Num;
   StartLoc = Reg.StartLoc;
   EndLoc = Reg.EndLoc;
-  return MatchOperand_Success;
+  return ParseStatus::Success;
 }
 
 // Look if there's a post modify on this operand. If so, consume it and
@@ -313,10 +315,10 @@ ColossusMCInstrInfo::OperandModifier ColossusAsmParser::ParseOperandModifier() {
   return ColossusMCInstrInfo::OperandNoPostInc;
 }
 
-bool ColossusAsmParser::ParseRegister(unsigned &RegNo, SMLoc &StartLoc,
+bool ColossusAsmParser::parseRegister(MCRegister &Reg, SMLoc &StartLoc,
                                       SMLoc &EndLoc) {
   // Expect a register name.
-  if (tryParseRegister(RegNo, StartLoc, EndLoc))
+  if (tryParseRegister(Reg, StartLoc, EndLoc).isSuccess())
     return Error(getLoc(), "invalid register");
   return false;
 }
@@ -422,13 +424,13 @@ parseSingleOperand(std::unique_ptr<ColossusOperand> &Op) {
 
 bool ColossusAsmParser::parseOperand(OperandVector &Operands,
                                      StringRef Mnemonic) {
-  OperandMatchResultTy ResTy = MatchOperandParserImpl(Operands, Mnemonic, true);
+  ParseStatus ResTy = MatchOperandParserImpl(Operands, Mnemonic, true);
 
   // If there wasn't a custom match, try the generic matcher below. Otherwise,
   // there was a match, but an error occurred, in which case, just return that
   // the operand parsing failed.
-  if (ResTy == MatchOperand_Success || ResTy == MatchOperand_ParseFail)
-    return ResTy;
+  if (ResTy.isSuccess() || ResTy.isFailure())
+    return ResTy.isSuccess();
 
   std::unique_ptr<ColossusOperand> Op;
   if (parseSingleOperand(Op) || !Op) {
@@ -438,13 +440,13 @@ bool ColossusAsmParser::parseOperand(OperandVector &Operands,
   return false;
 }
 
-OperandMatchResultTy
+ParseStatus
 ColossusAsmParser::parseImmAddressOperand(OperandVector &Operands) {
   SMLoc StartLoc = getLoc();
   // Register operands are invalid.
   Register Reg;
   if (!tryParseRegister(Reg)) {
-    return MatchOperand_NoMatch;
+    return ParseStatus::NoMatch;
   }
   // Parse a symbol or expression representing the address immediate.
   const MCExpr *Expr;
@@ -453,9 +455,9 @@ ColossusAsmParser::parseImmAddressOperand(OperandVector &Operands) {
         SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
     Operands.push_back(ColossusOperand::createImm(Expr, StartLoc, EndLoc,
                                                   AllowInvalidOperands));
-    return MatchOperand_Success;
+    return ParseStatus::Success;
   }
-  return MatchOperand_NoMatch;
+  return ParseStatus::NoMatch;
 }
 
 unsigned ColossusAsmParser::ParseOperandBroadcast(StringRef token)
@@ -468,32 +470,32 @@ unsigned ColossusAsmParser::ParseOperandBroadcast(StringRef token)
            .Default(0);
 }
 
-OperandMatchResultTy
+ParseStatus
 ColossusAsmParser::parseBroadcastOperand(OperandVector &Operands) {
   SMLoc StartLoc = getLoc();
 
   if (Parser.getTok().isNot(AsmToken::Dollar))
-    return MatchOperand_NoMatch;
+    return ParseStatus::NoMatch;
 
   // Expect a register name.
   if (Parser.getLexer().peekTok().isNot(AsmToken::Identifier))
-    return MatchOperand_NoMatch;
+    return ParseStatus::NoMatch;
 
   std::string RegName = "$";
   RegName +=  Parser.getLexer().peekTok().getString();
 
   unsigned RegNum = MatchRegisterName(RegName);
   if (RegNum == 0)
-    return MatchOperand_NoMatch;
+    return ParseStatus::NoMatch;
 
   AsmToken Tokens[3];
   size_t ReadCount = Parser.getLexer().peekTokens(Tokens);
 
   if (ReadCount != sizeof(Tokens) / sizeof(Tokens[0]))
-      return MatchOperand_NoMatch;
+      return ParseStatus::NoMatch;
 
   if (Tokens[1].isNot(AsmToken::Colon))
-    return MatchOperand_NoMatch;
+    return ParseStatus::NoMatch;
 
   unsigned Broadcast = ParseOperandBroadcast(Tokens[2].getString());
   if (Broadcast) {
@@ -506,20 +508,20 @@ ColossusAsmParser::parseBroadcastOperand(OperandVector &Operands) {
 
     Operands.push_back(ColossusOperand::createBroadcast(RegNum, StartLoc,
                                                         EndLoc, Broadcast));
-    return MatchOperand_Success;
+    return ParseStatus::Success;
   }
 
-  return MatchOperand_NoMatch;
+  return ParseStatus::NoMatch;
 }
 
 template<int vecSize>
-OperandMatchResultTy
+ParseStatus
 ColossusAsmParser::parseACCOperand(OperandVector &Operands) {
   unsigned RegNum;
   SMLoc StartLoc = getLoc();
   auto &Token = Parser.getTok();
   if (Token.getString().getAsInteger(10, RegNum)) {
-    return MatchOperand_NoMatch;
+    return ParseStatus::NoMatch;
   }
   auto *RC = &ColossusMCRegisterClasses[Colossus::ACCRegClassID];
   if (vecSize == 2) {
@@ -527,59 +529,59 @@ ColossusAsmParser::parseACCOperand(OperandVector &Operands) {
     RegNum /= 2;
   }
   if (RegNum >= RC->getNumRegs()) {
-    return MatchOperand_NoMatch;
+    return ParseStatus::NoMatch;
   }
   Lex();
   SMLoc EndLoc =
       SMLoc::getFromPointer(Token.getLoc().getPointer() - 1);
   Operands.push_back(ColossusOperand::createReg(RC->getRegister(RegNum),
                                                 StartLoc, EndLoc));
-  return MatchOperand_Success;
+  return ParseStatus::Success;
 }
 
-OperandMatchResultTy
+ParseStatus
 ColossusAsmParser::parseMEM2Operand(OperandVector &Operands) {
   SMLoc S, E;
-  unsigned BaseReg = 0;
-  unsigned OffReg = 0;
+  MCRegister BaseReg = 0;
+  MCRegister OffReg = 0;
 
   // Base register.
-  if (ParseRegister(BaseReg, S, E)) {
-    return MatchOperand_NoMatch;
+  if (parseRegister(BaseReg, S, E)) {
+    return ParseStatus::NoMatch;
   }
 
   // Comma?
   if (getLexer().getKind() != AsmToken::Comma) {
     Error(getLexer().getLoc(), "Comma missing");
-    return MatchOperand_ParseFail;
+    return ParseStatus::Failure;
   }
   Parser.Lex();
 
   // Offset register.
-  if (ParseRegister(OffReg, S, E)) {
-    return MatchOperand_NoMatch;
+  if (parseRegister(OffReg, S, E)) {
+    return ParseStatus::NoMatch;
   }
 
   // MEMrr
   Operands.push_back(ColossusOperand::createMEMrr(BaseReg, OffReg, S, E));
-  return MatchOperand_Success;
+  return ParseStatus::Success;
 }
 
-OperandMatchResultTy
+ParseStatus
 ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
   SMLoc S, E;
   Register Reg1, Reg2;
-  unsigned BaseReg = 0;
+  MCRegister BaseReg = 0;
 
   // Base register.
-  if (ParseRegister(BaseReg, S, E)) {
-    return MatchOperand_NoMatch;
+  if (parseRegister(BaseReg, S, E)) {
+    return ParseStatus::NoMatch;
   }
 
   // Comma?
   if (getLexer().getKind() != AsmToken::Comma) {
     Error(getLexer().getLoc(), "Comma missing");
-    return MatchOperand_ParseFail;
+    return ParseStatus::Failure;
   }
   Parser.Lex();
 
@@ -589,7 +591,7 @@ ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
     const MCExpr *Expr;
     S = getLoc();
     if (getParser().parseExpression(Expr)) {
-      return MatchOperand_NoMatch;
+      return ParseStatus::NoMatch;
     }
     // MEMri
     E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
@@ -597,16 +599,16 @@ ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
     const auto *MCE = dyn_cast<MCConstantExpr>(Expr);
     if (!MCE) {
       Error(S, "Operand is not a valid immediate");
-      return MatchOperand_NoMatch;
+      return ParseStatus::NoMatch;
     }
 
     if (MCE->getValue() >= (1 << 12) || MCE->getValue() < 0) {
       Error(S, "Out of bound immediate");
-      return MatchOperand_NoMatch;
+      return ParseStatus::NoMatch;
     }
 
     Operands.push_back(ColossusOperand::createMEMri3(BaseReg, Expr, S, E));
-    return MatchOperand_Success;
+    return ParseStatus::Success;
   }
 
   // Comma?
@@ -614,7 +616,7 @@ ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
     // MEMrr
     E = Reg1.EndLoc;
     Operands.push_back(ColossusOperand::createMEMrr3(BaseReg, Reg1.Num, S, E));
-    return MatchOperand_Success;
+    return ParseStatus::Success;
   }
   Parser.Lex();
 
@@ -623,7 +625,7 @@ ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
     const MCExpr *Expr;
     S = getLoc();
     if (getParser().parseExpression(Expr)) {
-      return MatchOperand_NoMatch;
+      return ParseStatus::NoMatch;
     }
     // MEMrri
     E = SMLoc::getFromPointer(getLoc().getPointer() - 1);
@@ -631,27 +633,27 @@ ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
     const auto *MCE = dyn_cast<MCConstantExpr>(Expr);
     if (!MCE) {
       Error(S, "Operand is not a valid immediate");
-      return MatchOperand_NoMatch;
+      return ParseStatus::NoMatch;
     }
 
     if (MCE->getValue() >= (1 << 12) || MCE->getValue() < 0) {
       Error(S, "Out of bound immediate");
-      return MatchOperand_NoMatch;
+      return ParseStatus::NoMatch;
     }
 
     Operands.push_back(ColossusOperand::createMEMrri(BaseReg, Reg1.Num,
                                                      Expr, S, E));
-    return MatchOperand_Success;
+    return ParseStatus::Success;
   }
 
   // MEMrrr
   E = Reg2.EndLoc;
   Operands.push_back(ColossusOperand::createMEMrrr(BaseReg, Reg1.Num,
                                                    Reg2.Num, S, E));
-  return MatchOperand_Success;
+  return ParseStatus::Success;
 }
 
-llvm::Optional<bool> ColossusAsmParser::ExpandMacroLdconst(MCInst &Inst,
+std::optional<bool> ColossusAsmParser::ExpandMacroLdconst(MCInst &Inst,
                                                            SMLoc IDLoc,
                                                            MCStreamer &Out,
                                                            unsigned SetziOpcode,
@@ -698,7 +700,7 @@ llvm::Optional<bool> ColossusAsmParser::ExpandMacroLdconst(MCInst &Inst,
   return true;
 }
 
-llvm::Optional<bool> ColossusAsmParser::ExpandMacroSubImm(MCInst &Inst,
+std::optional<bool> ColossusAsmParser::ExpandMacroSubImm(MCInst &Inst,
                                                           SMLoc IDLoc,
                                                           MCStreamer &Out) {
   auto &DestReg = Inst.getOperand(0);
@@ -726,7 +728,7 @@ llvm::Optional<bool> ColossusAsmParser::ExpandMacroSubImm(MCInst &Inst,
   return EmitInstruction(Inst, Out, IDLoc);
 }
 
-llvm::Optional<bool>
+std::optional<bool>
 ColossusAsmParser::ExpandMacroInstruction(MCInst &Inst, SMLoc IDLoc,
                                           MCStreamer &Out) {
   switch (Inst.getOpcode()) {
@@ -742,7 +744,7 @@ ColossusAsmParser::ExpandMacroInstruction(MCInst &Inst, SMLoc IDLoc,
                               Colossus::OR_IZ_A);
 
   default:
-    return None;
+    return {};
   };
 }
 
@@ -1020,8 +1022,8 @@ MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_Success:
   {
     auto Expanded = ExpandMacroInstruction(Inst, IDLoc, Out);
-    if (Expanded.hasValue()) {
-      return Expanded.getValue();
+    if (Expanded.has_value()) {
+      return Expanded.value();
     }
 
     Inst.setLoc(IDLoc);

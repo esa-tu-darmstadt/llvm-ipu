@@ -86,7 +86,7 @@ foreach ColossusModel = [ColossusCoissuedModel, ColossusSingleIssuedModel] in {
 
     def : WriteRes<WriteMain, [ColossusUnitMain]> { let Latency = 1; }
     def : WriteRes<WriteFreeMain, [ColossusUnitMain]> {
-      let ResourceCycles = [0];
+      let ReleaseAtCycles = [0];
       let Latency = 1;
       let NumMicroOps = 0;
     }
@@ -94,7 +94,7 @@ foreach ColossusModel = [ColossusCoissuedModel, ColossusSingleIssuedModel] in {
 
     // Assume COPY won't generate any instruction.
     def : WriteRes<WriteFreeCopy, [ColossusUnitMain]> {
-      let ResourceCycles = [0];
+      let ReleaseAtCycles = [0];
       let Latency = 0;
       let NumMicroOps = 0;
     }

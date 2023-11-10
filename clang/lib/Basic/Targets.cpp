@@ -272,7 +272,7 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
 
     // IPU local patch begin
   case llvm::Triple::colossus:
-    return new ColossusTargetInfo(Triple, Opts);
+    return std::make_unique<ColossusTargetInfo>(Triple, Opts);
     // IPU local patch end
 
   case llvm::Triple::msp430:

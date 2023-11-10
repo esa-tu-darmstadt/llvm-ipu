@@ -212,8 +212,8 @@ void ColossusToolChain::addClangTargetOptions(
 
   if (isWorker()) {
     // If compiling for the IPU, use native half types.
-    CC1Args.push_back("-fnative-half-type");
-    CC1Args.push_back("-fallow-half-arguments-and-returns");
+    // CC1Args.push_back("-fnative-half-type");
+    // CC1Args.push_back("-fallow-half-arguments-and-returns");
 
     // Disable lax vector conversions by default
     CC1Args.push_back("-flax-vector-conversions=none");

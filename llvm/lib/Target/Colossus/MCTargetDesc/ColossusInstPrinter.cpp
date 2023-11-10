@@ -55,7 +55,7 @@ using namespace llvm;
 
 const char ColossusInstPrinter::BundlePadding = '\t';
 
-void ColossusInstPrinter::printRegName(raw_ostream &OS, unsigned RegNo) const {
+void ColossusInstPrinter::printRegName(raw_ostream &OS, MCRegister RegNo) const {
   OS << StringRef(getRegisterName(RegNo)).lower();
 }
 

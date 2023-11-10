@@ -498,7 +498,7 @@ private:
   bool AllowOptimzations;
   MCInst InstructionBundle;
 
-  typedef llvm::StringMap<llvm::Optional<unsigned>> ArchMap;
+  typedef llvm::StringMap<std::optional<unsigned>> ArchMap;
   typedef std::tuple<std::string, bool, bool, ArchMap> RegDef;
 
   struct Register {
@@ -515,7 +515,7 @@ private:
     bool AvailableInCurrentMode(bool isSupervisor) const {
       return isSupervisor ? AvailableInSupervisor : AvailableInWorker;
     }
-    llvm::Optional<unsigned>
+    std::optional<unsigned>
     getRegNumForArch(std::string const &ArchName) const {
       return ArchAvailability.lookup(ArchName);
     }
@@ -536,17 +536,17 @@ private:
   bool EmitInstruction(MCInst &Inst, MCStreamer &Out, SMLoc &IDLoc);
 
   // Custom parsing for immediate address operands.
-  OperandMatchResultTy parseImmAddressOperand(OperandVector &Operands);
+  ParseStatus parseImmAddressOperand(OperandVector &Operands);
 
   // Custom parsing for accumulator register operands.
   template <int vecSize>
-  OperandMatchResultTy parseACCOperand(OperandVector &Operands);
+  ParseStatus parseACCOperand(OperandVector &Operands);
 
-  OperandMatchResultTy parseBroadcastOperand(OperandVector &Operands);
+  ParseStatus parseBroadcastOperand(OperandVector &Operands);
 
   // Custom parsing for memory MEM* operands.
-  OperandMatchResultTy parseMEM2Operand(OperandVector &Operands);
-  OperandMatchResultTy parseMEM3Operand(OperandVector &Operands);
+  ParseStatus parseMEM2Operand(OperandVector &Operands);
+  ParseStatus parseMEM3Operand(OperandVector &Operands);
 
 public:
   ColossusAsmParser(const MCSubtargetInfo &sti, MCAsmParser &parser,
@@ -579,9 +579,9 @@ public:
   // Override MCTargetAsmParser.
   bool parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) override;
   bool ParseDirective(AsmToken DirectiveID) override;
-  OperandMatchResultTy tryParseRegister(unsigned &RegNo, SMLoc &StartLoc,
+  ParseStatus tryParseRegister(MCRegister &Reg, SMLoc &StartLoc,
                                         SMLoc &EndLoc) override;
-  bool ParseRegister(unsigned &RegNo, SMLoc &StartLoc, SMLoc &EndLoc) override;
+  bool parseRegister(MCRegister &Reg, SMLoc &StartLoc, SMLoc &EndLoc) override;
   bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc, OperandVector &Operands) override;
   bool MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
@@ -589,14 +589,14 @@ public:
                                uint64_t &ErrorInfo,
                                bool MatchingInlineAsm) override;
 
-  llvm::Optional<bool> ExpandMacroInstruction(MCInst &Inst, SMLoc IDLoc,
+  std::optional<bool> ExpandMacroInstruction(MCInst &Inst, SMLoc IDLoc,
                                               MCStreamer &Out);
 
-  llvm::Optional<bool> ExpandMacroLdconst(MCInst &Inst, SMLoc IDLoc,
+  std::optional<bool> ExpandMacroLdconst(MCInst &Inst, SMLoc IDLoc,
                                           MCStreamer &Out, unsigned SetziOpcode,
                                           unsigned OrOpcode);
 
-  llvm::Optional<bool> ExpandMacroSubImm(MCInst &Inst, SMLoc IDLoc,
+  std::optional<bool> ExpandMacroSubImm(MCInst &Inst, SMLoc IDLoc,
                                          MCStreamer &Out);
 
   bool ParseFloat16(bool Negate, uint16_t &Value);

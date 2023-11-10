@@ -1062,7 +1062,7 @@ bool ColossusFrameLowering::spillCalleeSavedRegisters(
           .setMIFlag(MachineInstr::FrameSetup);
     } else {
       const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(Reg);
-      TII.storeRegToStackSlot(MBB, MI, Reg, true, CS.getFrameIdx(), RC, TRI);
+      TII.storeRegToStackSlot(MBB, MI, Reg, true, CS.getFrameIdx(), RC, TRI, Register());
       auto PrevMI = std::prev(MI);
       PrevMI->setFlag(MachineInstr::FrameSetup);
     }

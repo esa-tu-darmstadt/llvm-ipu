@@ -33,7 +33,7 @@
 #include "ColossusRegisterInfo.h"
 #include "MCTargetDesc/ColossusMCFixups.h"
 #include "MCTargetDesc/ColossusMCInstrInfo.h"
-#include "llvm/ADT/Triple.h"
+#include "llvm/TargetParser/Triple.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmLayout.h"
@@ -367,7 +367,7 @@ void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
         if (ColossusMCInstrInfo::isRepeat(*Inst)) {
           auto nextOffset = Layout.getFragmentOffset(&Fragment) +
                             (Opcode == TargetOpcode::BUNDLE ? 8 : 4);
-          if (Section->getAlignment() < 8 || (nextOffset & 7) != 0) {
+          if (Section->getAlign() < 8 || (nextOffset & 7) != 0) {
             char const * message = Opcode == TargetOpcode::BUNDLE ?
                 "code following rpt instruction is misaligned. Please add a "
                 "nop before the bundled rpt instruction to ensure the rpt "

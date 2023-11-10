@@ -61,7 +61,7 @@ public:
   ~ColossusMCCodeEmitter() {}
 
   // Override MCCodeEmitter.
-  void encodeInstruction(const MCInst &MI, raw_ostream &OS,
+  void encodeInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
                          SmallVectorImpl<MCFixup> &Fixups,
                          const MCSubtargetInfo &STI) const override;
 
@@ -96,7 +96,7 @@ private:
                            SmallVectorImpl<MCFixup> &Fixups,
                            const MCSubtargetInfo &STI) const;
 
-  void EncodeSingleInstruction(const MCInst &MI, raw_ostream &OS,
+  void EncodeSingleInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
                                SmallVectorImpl<MCFixup> &Fixups,
                                const MCSubtargetInfo &STI) const;
 
@@ -127,7 +127,7 @@ MCCodeEmitter *llvm::createColossusMCCodeEmitter(const MCInstrInfo &MCII,
 }
 
 void ColossusMCCodeEmitter::
-EncodeSingleInstruction(const MCInst &MI, raw_ostream &OS,
+EncodeSingleInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
                   SmallVectorImpl<MCFixup> &Fixups,
                   const MCSubtargetInfo &STI) const {
   uint64_t Bits = getBinaryCodeForInstr(MI, Fixups, STI);
@@ -144,16 +144,16 @@ EncodeSingleInstruction(const MCInst &MI, raw_ostream &OS,
   }
 
   if (Size == 4) {
-    support::endian::Writer(OS, support::little).write<uint32_t>(Bits);
+    support::endian::write<uint32_t>(CB, Bits, support::little);
   }
   else {
     assert (Size == 8 && "Unexpected instruction siz when trying to encode");
-    support::endian::Writer(OS, support::little).write<uint64_t>(Bits);
+    support::endian::write<uint64_t>(CB, Bits, support::little);
   }
 }
 
 void ColossusMCCodeEmitter::
-encodeInstruction(const MCInst &MI, raw_ostream &OS,
+encodeInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
                   SmallVectorImpl<MCFixup> &Fixups,
                   const MCSubtargetInfo &STI) const {
 
@@ -161,7 +161,7 @@ encodeInstruction(const MCInst &MI, raw_ostream &OS,
     unsigned InstOffset = 0;
     for (auto &InstOperand : MI) {
       auto FixupsBeforeEncoding = Fixups.size();
-      EncodeSingleInstruction(*InstOperand.getInst(), OS, Fixups, STI);
+      EncodeSingleInstruction(*InstOperand.getInst(), CB, Fixups, STI);
 
       // If any fixups have been created for an instruction then we must
       // correct the offset of the fixup for instructions in the bundle.
@@ -177,7 +177,7 @@ encodeInstruction(const MCInst &MI, raw_ostream &OS,
     auto expr = MCConstantExpr::create(0, Ctx);
     Fixups.push_back(
         MCFixup::create(0, expr, (MCFixupKind)Colossus::fixup_colossus_single));
-    EncodeSingleInstruction(MI, OS, Fixups, STI);
+    EncodeSingleInstruction(MI, CB, Fixups, STI);
   }
 }
 

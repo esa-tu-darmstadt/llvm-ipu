@@ -4,8 +4,6 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
-// This file has been modified by Graphcore Ltd.
-//
 //===----------------------------------------------------------------------===//
 //
 // This file implements float type expansion and softening for LegalizeTypes.
@@ -575,8 +573,7 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_FP16_TO_FP(SDNode *N) {
   EVT OpsVT[1] = { N->getOperand(0).getValueType() };
   CallOptions.setTypeListBeforeSoften(OpsVT, N->getValueType(0), true);
   SDValue Res32 = TLI.makeLibCall(DAG, RTLIB::FPEXT_F16_F32, MidVT, Op,
-                                  CallOptions, SDLoc(N), Chain)
-                      .first;
+                                  CallOptions, SDLoc(N), Chain).first;
   Chain = Res32.getValue(1);
   if (N->getValueType(0) == MVT::f32) {
     if (IsStrict)
@@ -587,7 +584,8 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_FP16_TO_FP(SDNode *N) {
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), N->getValueType(0));
   RTLIB::Libcall LC = RTLIB::getFPEXT(MVT::f32, N->getValueType(0));
   assert(LC != RTLIB::UNKNOWN_LIBCALL && "Unsupported FP_EXTEND!");
-  return TLI.makeLibCall(DAG, LC, NVT, Res32, CallOptions, SDLoc(N)).first;
+  return TLI.makeLibCall(DAG, LC, NVT, Res32, CallOptions, SDLoc(N), Chain).first;
+  // IPU local patch end
 }
 
 // FIXME: Should we just use 'normal' FP_EXTEND / FP_TRUNC instead of special
@@ -3002,9 +3000,35 @@ SDValue DAGTypeLegalizer::SoftPromoteHalfRes_UnaryOp(SDNode *N) {
 SDValue DAGTypeLegalizer::SoftPromoteHalfRes_BinOp(SDNode *N) {
   EVT OVT = N->getValueType(0);
   EVT NVT = TLI.getTypeToTransformTo(*DAG.getContext(), OVT);
+
+  SDLoc dl(N);
+
+  if (N->isStrictFPOpcode()) {
+    SDValue Chain = N->getOperand(0);
+    SDValue Op0 = GetSoftPromotedHalf(N->getOperand(1));
+    SDValue Op1 = GetSoftPromotedHalf(N->getOperand(2));
+
+    // Promote to the larger FP type.
+    Op0 = DAG.getNode(ISD::STRICT_FP16_TO_FP, dl,
+                      DAG.getVTList(NVT, MVT::Other), Chain, Op0);
+    Op1 = DAG.getNode(ISD::STRICT_FP16_TO_FP, dl,
+                      DAG.getVTList(NVT, MVT::Other), Chain, Op1);
+    SmallVector<SDValue, 2> TmpChains = {Op0.getValue(1), Op1.getValue(1)};
+    Chain = DAG.getTokenFactor(dl, TmpChains);
+
+    SDValue Res = DAG.getNode(N->getOpcode(), dl,
+                              DAG.getVTList(NVT, MVT::Other), Chain, Op0, Op1);
+    Chain = Res.getValue(1);
+
+    // Convert back to FP16 as an integer.
+    Res = DAG.getNode(ISD::STRICT_FP_TO_FP16, dl,
+                      DAG.getVTList(MVT::i16, MVT::Other), Chain, Res);
+    ReplaceValueWith(SDValue(N, 1), Res.getValue(1));
+    return Res;
+  }
+
   SDValue Op0 = GetSoftPromotedHalf(N->getOperand(0));
   SDValue Op1 = GetSoftPromotedHalf(N->getOperand(1));
-  // IPU local patch end
 
   // Promote to the larger FP type.
   auto PromotionOpcode = GetPromotionOpcode(OVT, NVT);

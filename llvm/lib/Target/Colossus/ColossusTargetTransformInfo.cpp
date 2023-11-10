@@ -64,11 +64,11 @@ enum ImmOperand {
 // hoisting pass only host when the cost of an instruction is > TTI::TCC_Basic.
 static InstructionCost getImmCost(const APInt &Imm) {
   // add <dst>, $m15, <cst>
-  if (Imm.getMinSignedBits() <= 16)
+  if (Imm.getNumSignBits() <= 16)
     return 2;
 
   unsigned BitWidth =
-      Imm.isNegative() ? Imm.getMinSignedBits() : Imm.getActiveBits();
+      Imm.isNegative() ? Imm.getNumSignBits() : Imm.getActiveBits();
   assert(BitWidth <= 32);
   return BitWidth <= 20 ? 2 : 3;
 }
@@ -155,9 +155,9 @@ InstructionCost ColossusTTIImpl::getIntImmCostInst(unsigned Opc, unsigned Idx,
 
   // Set ImmBits depending on whether an instruction is Simm only.
   if ((ImmType & SIMM) && !(ImmType & ~SIMM)) {
-    ImmBits = Imm.getMinSignedBits();
+    ImmBits = Imm.getNumSignBits();
   } else {
-    ImmBits = Imm.isNegative() ? Imm.getMinSignedBits() : Imm.getActiveBits();
+    ImmBits = Imm.isNegative() ? Imm.getNumSignBits() : Imm.getActiveBits();
   }
 
   // Fits in the instruction, therefore prevent hoisting.
@@ -210,21 +210,21 @@ InstructionCost ColossusTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
                                                  MaybeAlign Alignment,
                                                  unsigned AddressSpace,
                                                  TTI::TargetCostKind CostKind,
+                                                 TTI::OperandValueInfo OpdInfo,
                                                  const Instruction *I) {
   assert(!Src->isVoidTy() && "Invalid type");
   // Assume types, such as structs, are expensive.
   EVT VT = getTLI()->getValueType(DL, Src, true);
   if (VT == MVT::Other)
     return 4;
-  std::pair<InstructionCost, MVT> LT =
-      getTLI()->getTypeLegalizationCost(DL, Src);
+  std::pair<InstructionCost, MVT> LT = getTypeLegalizationCost(Src);
 
   // Assuming that all loads of legal types cost 1.
   InstructionCost Cost = LT.first;
 
   // 64-bit integer memory operations are implemented with two 32-bit integer
   // memory operations.
-  if (VT.isInteger() && VT.getSizeInBits().getKnownMinSize() == 64)
+  if (VT.isInteger() && VT.getSizeInBits().getKnownMinValue() == 64)
     Cost *= 2;
   if (CostKind != TTI::TCK_RecipThroughput)
     return Cost;
@@ -246,7 +246,7 @@ InstructionCost ColossusTTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
       // We must account for the cost of building or decomposing the vector.
       Cost += getScalarizationOverhead(cast<VectorType>(Src),
                                        Opcode != Instruction::Store,
-                                       Opcode == Instruction::Store);
+                                       Opcode == Instruction::Store, TTI::TCK_RecipThroughput);
     }
   }
 

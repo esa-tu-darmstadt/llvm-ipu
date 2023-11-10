@@ -95,8 +95,10 @@ namespace {
     SDNode *SelectConstant(SDNode *Op);
 
   public:
-    ColossusDAGToDAGISel(ColossusTargetMachine &TM, CodeGenOpt::Level OptLevel)
-      : SelectionDAGISel(TM, OptLevel)
+    static char ID;
+
+    ColossusDAGToDAGISel(ColossusTargetMachine &TM, CodeGenOptLevel OptLevel)
+      : SelectionDAGISel(ID, TM, OptLevel)
       { }
 
     bool runOnMachineFunction(MachineFunction &MF) override {
@@ -136,7 +138,7 @@ namespace {
     // Inline assembly memory operands.
     bool SelectAddr(SDNode *Op, SDValue Addr, SDValue &Base, SDValue &Offset);
     bool SelectInlineAsmMemoryOperand(const SDValue &Op,
-                                      unsigned ConstraintID,
+                                      InlineAsm::ConstraintCode ConstraintID,
                                       std::vector<SDValue> &OutOps) override;
 
     // If a given load/store can be turned into a post-inc load/store, derive
@@ -179,6 +181,8 @@ bool isShiftedUInt(uint64_t Value, unsigned Shift) {
 }
 
 }  // end anonymous namespace
+
+char ColossusDAGToDAGISel::ID;
 
 void ColossusDAGToDAGISel::PreprocessISelDAG() {
   CTL::PostprocessForDAGToDAG(CurDAG, *Subtarget);
@@ -431,13 +435,13 @@ SelectAddr(SDNode *Op, SDValue Addr,
 /// instruction) should be added to the OutOps vector.
 bool ColossusDAGToDAGISel::
 SelectInlineAsmMemoryOperand(const SDValue &Op,
-                             unsigned ConstraintID,
+                             InlineAsm::ConstraintCode ConstraintID,
                              std::vector<SDValue> &OutOps) {
   SDValue Op0, Op1;
   switch (ConstraintID) {
   default:
     return true;
-  case InlineAsm::Constraint_m: // Memory.
+  case InlineAsm::ConstraintCode::m: // Memory.
     if (!SelectAddr(Op.getNode(), Op, Op0, Op1)) {
       return true;
     }
@@ -699,7 +703,7 @@ SDNode *ColossusDAGToDAGISel::SelectViaZeroRegister(SDNode *N) {
 
   // This function only matches constant values
   auto maybeUint = CTL::SDValueToUINT64(SDValue(N, 0), *CurDAG);
-  if (!maybeUint.hasValue()) {
+  if (!maybeUint.has_value()) {
     return nullptr;
   }
 
@@ -718,7 +722,7 @@ SDNode *ColossusDAGToDAGISel::SelectViaZeroRegister(SDNode *N) {
   SDValue Zero = CurDAG
     ->getCopyFromReg(CurDAG->getEntryNode(), dl, zeroRegister, VT);
 
-  if (maybeUint.getValue() == 0u) {
+  if (maybeUint.value() == 0u) {
     // Zero constants are optimally created by copying from the zero register
     return Zero.getNode();
   }
@@ -739,7 +743,7 @@ SDNode *ColossusDAGToDAGISel::SelectViaZeroRegister(SDNode *N) {
       return false;
     };
 
-    if (usedBitsSet(maybeUint.getValue())) {
+    if (usedBitsSet(maybeUint.value())) {
       SDValue coissueImm = CurDAG->getTargetConstant(0, dl, MVT::i32);
       unsigned op = VT.getSizeInBits() == 32 ? Colossus::NOT : Colossus::NOT64;
       return CurDAG->getMachineNode(op, dl, VT, Zero, coissueImm);
@@ -1025,6 +1029,6 @@ void ColossusDAGToDAGISel::Select(SDNode *N) {
 }
 
 FunctionPass *llvm::createColossusISelDag(ColossusTargetMachine &TM,
-                                          CodeGenOpt::Level OptLevel) {
+                                          CodeGenOptLevel OptLevel) {
   return new ColossusDAGToDAGISel(TM, OptLevel);
 }

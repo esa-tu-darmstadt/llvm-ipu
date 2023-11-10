@@ -66,14 +66,14 @@ public:
                       MachineBasicBlock::iterator MI,
                       Register SrcReg, bool isKill, int FrameIndex,
                       const TargetRegisterClass *RC,
-                      const TargetRegisterInfo *TRI) const override;
+                      const TargetRegisterInfo *TRI, Register VReg) const override;
 
   virtual void
   loadRegFromStackSlot(MachineBasicBlock &MBB,
                        MachineBasicBlock::iterator MI,
                        Register DestReg, int FrameIndex,
                        const TargetRegisterClass *RC,
-                       const TargetRegisterInfo *TRI) const override;
+                       const TargetRegisterInfo *TRI, Register VReg) const override;
 
   void expandF32ToI32(MachineBasicBlock &MBB,
                       MachineBasicBlock::iterator MI,

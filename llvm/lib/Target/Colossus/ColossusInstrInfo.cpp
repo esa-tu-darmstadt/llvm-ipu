@@ -243,7 +243,7 @@ storeRegToStackSlot(MachineBasicBlock &MBB,
                     bool isKill,
                     int FrameIndex,
                     const TargetRegisterClass *RC,
-                    const TargetRegisterInfo *TRI) const {
+                    const TargetRegisterInfo *TRI, Register VReg) const {
   DebugLoc dl = getDL(MBB, I);
   switch (RC->getID()) {
   default:
@@ -295,7 +295,7 @@ loadRegFromStackSlot(MachineBasicBlock &MBB,
                      Register DestReg,
                      int FrameIndex,
                      const TargetRegisterClass *RC,
-                     const TargetRegisterInfo *TRI) const {
+                     const TargetRegisterInfo *TRI, Register VReg) const {
   DebugLoc dl = getDL(MBB, I);
   switch (RC->getID()) {
   default:
@@ -799,7 +799,7 @@ bool ColossusInstrInfo::canBeCSECandidate(const MachineInstr &MI) const {
 
 namespace {
 
-using CloopInstrIter = Optional<MachineBasicBlock::instr_iterator>;
+using CloopInstrIter = std::optional<MachineBasicBlock::instr_iterator>;
 CloopInstrIter findOpcodeFromTerminator(MachineBasicBlock *BB,
                                         unsigned opcode) {
   auto I = BB->getFirstInstrTerminator();
@@ -913,7 +913,7 @@ public:
     }
   }
 
-  Optional<bool> createTripCountGreaterCondition(
+  std::optional<bool> createTripCountGreaterCondition(
       int TC, MachineBasicBlock &MBB,
       SmallVectorImpl<MachineOperand> &Cond) override {
 

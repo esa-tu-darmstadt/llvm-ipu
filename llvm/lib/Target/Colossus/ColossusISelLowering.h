@@ -39,10 +39,10 @@
 
 #include "Colossus.h"
 #include "ColossusISDOpcodes.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include <set>
+#include <optional>
 
 namespace llvm {
 
@@ -78,8 +78,8 @@ namespace llvm {
     virtual const TargetRegisterClass *
     getRegClassFor(MVT VT, bool isDivergent = false) const override;
 
-    bool isCheapToSpeculateCtlz() const override { return true; }
-    bool isCheapToSpeculateCttz() const override { return true; }
+    bool isCheapToSpeculateCtlz(Type *Ty) const override { return true; }
+    bool isCheapToSpeculateCttz(Type *Ty) const override { return true; }
 
     /// Fused multiply add formation.
     bool enableAggressiveFMAFusion(EVT VT) const override;
@@ -109,7 +109,7 @@ namespace llvm {
                                       TargetLoweringOpt &TLO) const override;
 
     // Functions used by DAGToDAG
-    static llvm::Optional<uint64_t> SDValueToUINT64(SDValue, SelectionDAG &);
+    static std::optional<uint64_t> SDValueToUINT64(SDValue, SelectionDAG &);
     static SDValue exactDivideConstant(SelectionDAG *DAG, SDValue val, int64_t by);
     static SDValue exactDivideVariable(SelectionDAG *DAG, SDValue val, int64_t by);
     static void PostprocessForDAGToDAG(SelectionDAG*, const ColossusSubtarget &);
@@ -122,7 +122,7 @@ namespace llvm {
     /// Number of cycle checks since the bitcast operand was seen or revisited.
     mutable unsigned NumRoundsSinceLastBitcastOp = 0;
     /// Saved number of cycle checks after the same bitcast operand is seen.
-    mutable Optional<unsigned> SavedNumRounds;
+    mutable std::optional<unsigned> SavedNumRounds;
 
     bool isLikelyDAGCombineCycle(SDValue R) const;
 

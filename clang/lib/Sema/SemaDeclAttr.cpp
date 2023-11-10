@@ -24,6 +24,7 @@
 #include "clang/AST/Mangle.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Type.h"
+#include "clang/Basic/AttributeCommonInfo.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Cuda.h"
 #include "clang/Basic/DarwinSDKInfo.h"
@@ -449,10 +450,10 @@ static void handlePoplarConstraintAttr(Sema &S, Decl *D,
       return;
     constraints.push_back(constraint);
   }
-  AttributeCommonInfo I(Attr.getRange(),
-                        AttributeCommonInfo::NoSemaHandlerAttribute,
-                        AttributeCommonInfo::AS_CXX11,
-                        Attr.getAttributeSpellingListIndex());
+  AttributeCommonInfo I(
+      Attr.getRange(), AttributeCommonInfo::NoSemaHandlerAttribute,
+      AttributeCommonInfo::Form(AttributeCommonInfo::AS_CXX11,
+                                Attr.getAttributeSpellingListIndex(), 0, 0));
   D->addAttr(::new (S.Context) PoplarConstraintAttr(
       S.Context, I, constraints.data(), constraints.size()));
 }

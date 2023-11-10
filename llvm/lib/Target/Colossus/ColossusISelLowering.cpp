@@ -320,7 +320,7 @@ ColossusTargetLowering
   setOperationAction(ISD::STRICT_FSETCCS, MVT::f32, Custom);
 
   //Current rounding mode.
-  setOperationAction(ISD::FLT_ROUNDS_, MVT::i32, Custom);
+  setOperationAction(ISD::GET_ROUNDING, MVT::i32, Custom);
 
   // integer to floating point conversions
   for (unsigned op :
@@ -793,7 +793,7 @@ LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::ConstantPool:         return LowerConstantPool(Op, DAG);
   case ISD::GlobalAddress:        return LowerGlobalAddress(Op, DAG);
   case ISD::JumpTable:            return LowerJumpTable(Op, DAG);
-  case ISD::FLT_ROUNDS_:          return LowerFLT_ROUNDS_(Op, DAG);
+  case ISD::GET_ROUNDING:          return LowerFLT_ROUNDS_(Op, DAG);
   case ISD::FRAME_TO_ARGS_OFFSET: return LowerFRAME_TO_ARGS_OFFSET(Op, DAG);
   case ISD::INTRINSIC_W_CHAIN:    return LowerINTRINSIC_W_CHAIN(Op, DAG);
   case ISD::INTRINSIC_WO_CHAIN:   return LowerINTRINSIC_WO_CHAIN(Op, DAG);
@@ -1100,7 +1100,7 @@ bool isConstantMinusOne(SDValue N) {
     return true;
   }
   if (ConstantFPSDNode *CF = dyn_cast<ConstantFPSDNode>(N)) {
-    return CF->getValueAPF().bitcastToAPInt().isAllOnesValue();
+    return CF->getValueAPF().bitcastToAPInt().isAllOnes();
   }
   return false;
 }
@@ -1258,8 +1258,8 @@ SDValue getCanonicalConstant(SDValue Op, SelectionDAG &DAG) {
   }
 
   auto maybeValue = ColossusTargetLowering::SDValueToUINT64(Op, DAG);
-  if (maybeValue.hasValue()) {
-    SDValue res = makeCanonicalConstant(maybeValue.getValue(),
+  if (maybeValue.has_value()) {
+    SDValue res = makeCanonicalConstant(maybeValue.value(),
                                         Op.getValueType(), SDLoc(Op), DAG);
     assert(isCanonicalConstant(res));
     return res;
@@ -1342,7 +1342,7 @@ static SDValue deriveStoreFromExisting(SelectionDAG &DAG, StoreSDNode *STNode,
   SDValue Addr = STNode->getBasePtr();
   SDValue derived =
       DAG.getStore(STNode->getChain(), dl, Value, Addr,
-                   STNode->getPointerInfo(), STNode->getAlignment(),
+                   STNode->getPointerInfo(), STNode->getAlign(),
                    STNode->getMemOperand()->getFlags(), STNode->getAAInfo());
   if (STNode->isIndexed()) {
     derived = DAG.getIndexedStore(derived, dl, Addr, STNode->getOffset(),
@@ -1931,7 +1931,7 @@ bool performBitcastLoadCombine(SDNode *N, SelectionDAG &DAG) {
         DAG.getLoad(LDNode->getAddressingMode(), ISD::NON_EXTLOAD, to,
                     SDLoc(LDNode), LDNode->getChain(), LDNode->getBasePtr(),
                     LDNode->getOffset(), LDNode->getPointerInfo(), to,
-                    LDNode->getAlignment(), LDNode->getMemOperand()->getFlags(),
+                    LDNode->getAlign(), LDNode->getMemOperand()->getFlags(),
                     LDNode->getAAInfo(), LDNode->getRanges()));
     assert(LDNode->getNumValues() == r->getNumValues());
     return r;
@@ -2145,7 +2145,7 @@ SDValue expandPostincLoad(SDNode *N, SelectionDAG &DAG) {
     SDValue replacementLoad = DAG.getLoad(
         ISD::UNINDEXED, LDNode->getExtensionType(), LDNode->getValueType(0), dl,
         LDNode->getChain(), addr, DAG.getUNDEF(MVT::i32),
-        LDNode->getPointerInfo(), LDNode->getMemoryVT(), LDNode->getAlignment(),
+        LDNode->getPointerInfo(), LDNode->getMemoryVT(), LDNode->getAlign(),
         LDNode->getMemOperand()->getFlags(), LDNode->getAAInfo(),
         LDNode->getRanges());
 
@@ -2170,7 +2170,7 @@ SDValue expandPostincStore(SDNode *N, SelectionDAG &DAG) {
 
     SDValue replacementStore =
         DAG.getStore(STNode->getChain(), SDLoc(N), STNode->getValue(), addr,
-                     STNode->getPointerInfo(), STNode->getAlignment(),
+                     STNode->getPointerInfo(), STNode->getAlign(),
                      STNode->getMemOperand()->getFlags(), STNode->getAAInfo());
 
     // Replacing a node that returns addr, chain
@@ -2742,7 +2742,7 @@ SDValue performBitwiseBooleanCombine(SDNode *N, SelectionDAG &DAG,
               LDNode->getAddressingMode(), ISD::ZEXTLOAD,
               LDNode->getValueType(0), dl, LDNode->getChain(),
               LDNode->getBasePtr(), LDNode->getOffset(),
-              LDNode->getPointerInfo(), MemVT, LDNode->getAlignment(),
+              LDNode->getPointerInfo(), MemVT, LDNode->getAlign(),
               LDNode->getMemOperand()->getFlags(), LDNode->getAAInfo(),
               LDNode->getRanges());
           DAG.ReplaceAllUsesWith(LDNode, zextLoad.getNode());
@@ -2919,7 +2919,7 @@ SDValue performSORTorROLLCombine(SDValue Op, SelectionDAG &DAG) {
 
   using SDValuePair = std::pair<SDValue,SDValue>;
 
-  auto doSplit = [&](SDValue val) -> llvm::Optional<SDValuePair> {
+  auto doSplit = [&](SDValue val) -> std::optional<SDValuePair> {
     auto valVT = val.getValueType();
     auto argVT = valVT.isFloatingPoint() ? MVT::f16 : MVT::i32;
     if (val.isUndef()) {
@@ -3390,7 +3390,7 @@ SDValue performSIGN_EXTEND_INREGCombine(SDNode *N, SelectionDAG &DAG) {
               LDNode->getValueType(0), dl, LDNode->getChain(),
               LDNode->getBasePtr(), LDNode->getOffset(),
               LDNode->getPointerInfo(), LDNode->getMemoryVT(),
-              LDNode->getAlignment(), LDNode->getMemOperand()->getFlags(),
+              LDNode->getAlign(), LDNode->getMemOperand()->getFlags(),
               LDNode->getAAInfo(), LDNode->getRanges());
           DAG.ReplaceAllUsesWith(LDNode, sextLoad.getNode());
           return sextLoad; // Replace SIGN_EXTEND_INREG with the sext load value
@@ -3790,7 +3790,7 @@ SDValue split64BitIntegerLoad(SDNode *N, SelectionDAG &DAG) {
     if (!ISD::isNON_EXTLoad(LDNode)) {
       report_fatal_error("Unexpected extending vector load");
     }
-    unsigned Align = LDNode->getAlignment();
+    Align Align = LDNode->getAlign();
     if (Align < MemVT.getStoreSize()) {
       report_fatal_error("Unexpected abnormally aligned load");
     }
@@ -3805,7 +3805,7 @@ SDValue split64BitIntegerLoad(SDNode *N, SelectionDAG &DAG) {
     SDValue Lo = DAG.getLoad(SplitVT, dl, Chain, AddrLo, pInfo, Align, flags);
     SDValue Hi = DAG.getLoad(SplitVT, dl, Chain, AddrHi,
                              pInfo.getWithOffset(Size),
-                             (Align + Size) % Align, flags);
+                             llvm::Align((Align.value() + Size) % Align.value()), flags);
 
     SDValue OutRes = concatValues(Lo, Hi, DAG);
     SDValue OutChains[] = {SDValue(Hi.getNode(), 1), SDValue(Lo.getNode(), 1)};
@@ -3838,7 +3838,7 @@ SDValue split64BitIntegerStore(SDNode *N, SelectionDAG &DAG) {
     if (SDNode->isTruncatingStore()) {
       report_fatal_error("Unexpected truncating vector store");
     }
-    unsigned Align = SDNode->getAlignment();
+    Align Align = SDNode->getAlign();
     if (Align < MemVT.getStoreSize()) {
       report_fatal_error("Unexpected abnormally aligned store");
     }
@@ -3857,7 +3857,7 @@ SDValue split64BitIntegerStore(SDNode *N, SelectionDAG &DAG) {
         DAG.getStore(Chain, dl, split.first, AddrLo, pInfo, Align, flags);
     OutChains[1] = DAG.getStore(Chain, dl, split.second, AddrHi,
                                 pInfo.getWithOffset(Size),
-                                (Align + Size) % Align, flags);
+                                llvm::Align((Align.value() + Size) % Align.value()), flags);
     SDValue OutChain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, OutChains);
 
     if (SDNode->isUnindexed())
@@ -4081,7 +4081,7 @@ SDValue split64BitIntegerBitwiseOps(SDNode *N, SelectionDAG &DAG) {
   SDValue op0Hi = DAG.getBitcast(Via, op0Split.second);
 
   // Split 64bit constant into two 32bit scalars
-  uint64_t op1Value = CTL::SDValueToUINT64(op1, DAG).getValue();
+  uint64_t op1Value = CTL::SDValueToUINT64(op1, DAG).value();
   SDValue op1Lo = makeCanonicalConstant(op1Value & 0xFFFFFFFFu, Via,
                                              SDLoc(op1), DAG);
   SDValue op1Hi =
@@ -4476,7 +4476,7 @@ bool ColossusTargetLowering::targetShrinkDemandedConstant(
   return false;
 }
 
-llvm::Optional<uint64_t>
+std::optional<uint64_t>
 ColossusTargetLowering::SDValueToUINT64(SDValue Op, SelectionDAG &DAG) {
   if (!Op) {
     return {};
@@ -4505,8 +4505,8 @@ ColossusTargetLowering::SDValueToUINT64(SDValue Op, SelectionDAG &DAG) {
       assert(lo.getValueType().getSizeInBits() == 32);
       auto loUint = SDValueToUINT64(lo, DAG);
       auto hiUint = SDValueToUINT64(hi, DAG);
-      if (loUint.hasValue() && hiUint.hasValue()) {
-        return loUint.getValue() | (hiUint.getValue() << 32u);
+      if (loUint.has_value() && hiUint.has_value()) {
+        return loUint.value() | (hiUint.value() << 32u);
       }
     }
   }
@@ -4521,8 +4521,8 @@ ColossusTargetLowering::SDValueToUINT64(SDValue Op, SelectionDAG &DAG) {
     SmallVector<uint64_t, 4> ops;
     for (unsigned i = 0; i < N; i++) {
       auto c = SDValueToUINT64(Op.getOperand(i), DAG);
-      if (c.hasValue()) {
-        uint64_t elementValue = c.getValue();
+      if (c.has_value()) {
+        uint64_t elementValue = c.value();
         if (VT.isInteger() && SS == 16) {
           elementValue &= 0xFFFFu; // truncating semantics
         }
@@ -5297,7 +5297,7 @@ LowerSIGN_EXTEND_INREG(SDValue Op, SelectionDAG &DAG) const {
   EVT VT = Op.getValueType();
   if (!DAG.getTargetLoweringInfo().isTypeLegal(VT))
     return SDValue();
-  assert(VT == MVT::i32 || "Sign extend with shifts only supported on i32");
+  assert(VT == MVT::i32 && "Sign extend with shifts only supported on i32");
 
   SDLoc dl(Op);
   SDValue toExtend = Op.getOperand(0);
@@ -5846,7 +5846,7 @@ SDValue ColossusTargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   }
 
   EVT MemVT = LDNode->getMemoryVT();
-  unsigned Align = LDNode->getAlignment();
+  Align Align = LDNode->getAlign();
   SDValue Chain = LDNode->getChain();
   SDValue Addr = LDNode->getBasePtr();
   auto &pInfo = LDNode->getPointerInfo();
@@ -5901,17 +5901,17 @@ SDValue ColossusTargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
 
   auto getLoadi8 = [&](SDValue addr) {
     return DAG.getExtLoad(ISD::EXTLOAD, dl, MVT::i32, Chain,
-                          addr, pInfo, MVT::i8, 1u, flags);
+                          addr, pInfo, MVT::i8, llvm::Align(1), flags);
   };
 
   auto getLoadi16 = [&](SDValue addr) {
     return DAG.getExtLoad(ISD::EXTLOAD, dl, MVT::i32, Chain,
-                          addr, pInfo, MVT::i16, 2u, flags);
+                          addr, pInfo, MVT::i16, llvm::Align(2), flags);
   };
 
   auto getLoadf16 = [&](SDValue addr) {
     return DAG.getLoad(MVT::f16, dl, Chain,
-                       addr, pInfo, 2u, flags);
+                       addr, pInfo, llvm::Align(2), flags);
   };
 
   auto getMergeVals = [&](SDValue val) -> SDValue {
@@ -5937,7 +5937,7 @@ SDValue ColossusTargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
 
           auto getValues = [&]() -> SmallVector<SDValue, 2u> {
             auto const LoAddr = Addr;
-            auto const HiAddr = incrByImmediate(DAG, Addr, Align);
+            auto const HiAddr = incrByImmediate(DAG, Addr, Align.value());
 
             if (MemVT.isInteger()) {
 
@@ -6092,12 +6092,12 @@ SDValue ColossusTargetLowering::LowerStoreToLibcall(SDValue Op,
   StoreSDNode *STNode = cast<StoreSDNode>(Op);
   SDLoc dl(STNode);
   EVT MemVT = STNode->getMemoryVT();
-  unsigned Align = STNode->getAlignment();
+  Align Align = STNode->getAlign();
   SDValue Chain = STNode->getChain();
   SDValue Value = STNode->getValue();
   SDValue Addr = STNode->getBasePtr();
 
-  auto getLibcallName = [](bool floatingPoint, unsigned alignment,
+  auto getLibcallName = [](bool floatingPoint, llvm::Align alignment,
                            unsigned storeSize, bool isSupervisor) {
     assert(storeSize == 1 || storeSize == 2 || storeSize == 4);
 
@@ -6203,7 +6203,7 @@ SDValue ColossusTargetLowering::LowerSTORE(SDValue Op,
     }
   }
 
-  unsigned Align = STNode->getAlignment();
+  Align Align = STNode->getAlign();
   SDValue Chain = STNode->getChain();
   SDValue Value = STNode->getValue();
   SDValue Addr = STNode->getBasePtr();
@@ -6656,28 +6656,28 @@ LowerATOMIC_LOAD(SDValue Op, SelectionDAG &DAG) const {
        N->getSuccessOrdering() == AtomicOrdering::Monotonic) &&
       "shouldInsertFencesForAtomic() expects unordered / monotonic when true");
   if (N->getMemoryVT() == MVT::i32) {
-    if (N->getAlignment() < 4) {
+    if (N->getAlign() < 4) {
       report_fatal_error("i32 atomic load must be aligned");
     }
     return DAG.getLoad(getPointerTy(DAG.getDataLayout()),
                        SDLoc(Op),
                        N->getChain(), N->getBasePtr(), N->getPointerInfo(),
-                       N->getAlignment(), N->getMemOperand()->getFlags(),
+                       N->getAlign(), N->getMemOperand()->getFlags(),
                        N->getAAInfo(), N->getRanges());
   }
   if (N->getMemoryVT() == MVT::i16) {
-    if (N->getAlignment() < 2) {
+    if (N->getAlign() < 2) {
       report_fatal_error("i16 atomic load must be aligned");
     }
     return DAG.getExtLoad(ISD::EXTLOAD, SDLoc(Op), MVT::i32, N->getChain(),
                           N->getBasePtr(), N->getPointerInfo(), MVT::i16,
-                          N->getAlignment(), N->getMemOperand()->getFlags(),
+                          N->getAlign(), N->getMemOperand()->getFlags(),
                           N->getAAInfo());
   }
   if (N->getMemoryVT() == MVT::i8) {
     return DAG.getExtLoad(ISD::EXTLOAD, SDLoc(Op), MVT::i32, N->getChain(),
                           N->getBasePtr(), N->getPointerInfo(), MVT::i8,
-                          N->getAlignment(), N->getMemOperand()->getFlags(),
+                          N->getAlign(), N->getMemOperand()->getFlags(),
                           N->getAAInfo());
   }
   return SDValue();
@@ -6692,10 +6692,10 @@ LowerATOMIC_STORE(SDValue Op, SelectionDAG &DAG) const {
        N->getSuccessOrdering() == AtomicOrdering::Monotonic) &&
       "shouldInsertFencesForAtomic() expects unordered / monotonic when true");
   if (N->getMemoryVT() == MVT::i32) {
-    if (N->getAlignment() < 4)
+    if (N->getAlign() < 4)
       report_fatal_error("atomic store must be aligned");
     return DAG.getStore(N->getChain(), SDLoc(Op), N->getVal(), N->getBasePtr(),
-                        N->getPointerInfo(), N->getAlignment(),
+                        N->getPointerInfo(), N->getAlign(),
                         N->getMemOperand()->getFlags(), N->getAAInfo());
   }
   if (N->getMemoryVT() == MVT::i8 ||
@@ -7208,7 +7208,7 @@ LowerCall(TargetLowering::CallLoweringInfo &CLI,
   }
 
   // Get the size of the outgoing arguments stack space requirement.
-  const unsigned NumBytes = CCInfo.getNextStackOffset();
+  const unsigned NumBytes = CCInfo.getStackSize();
 
   Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
 
@@ -7489,7 +7489,7 @@ LowerFormalArguments(SDValue Chain,
     const TargetRegisterClass *RC = &Colossus::MRRegClass;
     const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
     ColossusFunctionInfo *CFI = MF.getInfo<ColossusFunctionInfo>();
-    int Offset = CCInfo.getNextStackOffset();
+    int Offset = CCInfo.getStackSize();
     int FrameIndex =
         MFI.CreateFixedObject(TRI->getSpillSize(*RC), Offset, true);
     CFI->setVarArgsFrameIndex(FrameIndex);

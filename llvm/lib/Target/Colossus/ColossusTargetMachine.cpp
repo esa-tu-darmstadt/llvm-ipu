@@ -45,14 +45,14 @@
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/LoopDeletion.h"
 #include "llvm/Transforms/Vectorize.h"
 
 using namespace llvm;
 
-static Reloc::Model getEffectiveRelocModel(Optional<Reloc::Model> RM) {
-  if (!RM.hasValue())
+static Reloc::Model getEffectiveRelocModel(std::optional<Reloc::Model> RM) {
+  if (!RM.has_value())
     return Reloc::Static;
   return *RM;
 }
@@ -62,9 +62,9 @@ static Reloc::Model getEffectiveRelocModel(Optional<Reloc::Model> RM) {
 ColossusTargetMachine::ColossusTargetMachine(const Target &T, const Triple &TT,
                                              StringRef CPU, StringRef FS,
                                              const TargetOptions &Options,
-                                             Optional<Reloc::Model> RM,
-                                             Optional<CodeModel::Model> CM,
-                                             CodeGenOpt::Level OL, bool JIT)
+                                             std::optional<Reloc::Model> RM,
+                                             std::optional<CodeModel::Model> CM,
+                                             CodeGenOptLevel OL, bool JIT)
     : LLVMTargetMachine(T,
                         "e-m:e-p:32:32-i1:8:32-i8:8:32-i16:16:32-i64:32-i128:64"
                         "-f64:32-f128:64-v128:64-a:0:32-n32",
@@ -149,28 +149,28 @@ void ColossusPassConfig::addIRPasses() {
 void ColossusPassConfig::addCodeGenPrepare() {
   // Running hwloops pass before actual CGP pass so the builtin assumes are
   // still in the IR and can be used by the hwloops pass.
-  if (getOptLevel() != CodeGenOpt::None) {
+  if (getOptLevel() != CodeGenOptLevel::None) {
     addPass(createColossusLoadStoreVectorizerPass());
-    addPass(createHardwareLoopsPass());
+    addPass(createHardwareLoopsLegacyPass());
   }
   TargetPassConfig::addCodeGenPrepare();
 }
 
 void ColossusPassConfig::addPreRegAlloc() {
-  if (getOptLevel() != CodeGenOpt::None)
+  if (getOptLevel() != CodeGenOptLevel::None)
     addPass(&MachinePipelinerID);
   TargetPassConfig::addPreRegAlloc();
 }
 
 void ColossusPassConfig::addPostRegAlloc() {
-  if (getOptLevel() != CodeGenOpt::None)
+  if (getOptLevel() != CodeGenOptLevel::None)
     addPass(createColossusUnnecessaryAndElimPass());
   TargetPassConfig::addPostRegAlloc();
 }
 
 bool ColossusPassConfig::addPreISel() {
-  if (getOptLevel() != CodeGenOpt::None) {
-    addPass(createLoopDeletionPass());
+  if (getOptLevel() != CodeGenOptLevel::None) {
+    addPass(new LoopDeletionPass());
     addPass(createColossusLoopConversionPass());
     addPass(createCFGSimplificationPass());
   }
@@ -183,7 +183,7 @@ bool ColossusPassConfig::addInstSelector() {
 }
 
 void ColossusPassConfig::addPreEmitPass() {
-  if (getOptLevel() != CodeGenOpt::None) {
+  if (getOptLevel() != CodeGenOptLevel::None) {
     addPass(createColossusCountedLoopMIRPass());
     FunctionPass *p = createColossusCoissuePass();
     if (p) {
@@ -208,29 +208,7 @@ ColossusTargetMachine::getTargetTransformInfo(const Function &F) const {
   return TargetTransformInfo(ColossusTTIImpl(this, F));
 }
 
-void ColossusTargetMachine::adjustPassManager(PassManagerBuilder &PMB) {
-  for (auto when : {
-           PassManagerBuilder::EP_ScalarOptimizerLate,
-           PassManagerBuilder::EP_EnabledOnOptLevel0,
-       }) {
-    PMB.addExtension(
-        when, [&](const PassManagerBuilder &, legacy::PassManagerBase &PM) {
-          PM.add(createColossusIntrinsicCallsPass());
-        });
-  }
-  for (auto when : {
-           PassManagerBuilder::EP_VectorizerStart,
-           PassManagerBuilder::EP_EnabledOnOptLevel0,
-       }) {
-    PMB.addExtension(
-        when, [&](const PassManagerBuilder &, legacy::PassManagerBase &PM) {
-          PM.add(createColossusLibmCallsPass());
-        });
-  }
-}
-
 void ColossusTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
-
   PB.registerScalarOptimizerLateEPCallback(
       [=](FunctionPassManager &FPM, OptimizationLevel Level) {
         FPM.addPass(ColossusIntrinsicCallsPass());

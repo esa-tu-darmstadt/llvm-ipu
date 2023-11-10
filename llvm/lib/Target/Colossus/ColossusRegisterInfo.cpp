@@ -287,7 +287,7 @@ trackLivenessAfterRegAlloc(const MachineFunction &MF) const {
   return true;
 }
 
-void ColossusRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
+bool ColossusRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
                                                int, unsigned FIOperandNum,
                                                RegScavenger *) const {
   LLVM_DEBUG(dbgs() << "Eliminate frame index\n");
@@ -317,15 +317,18 @@ void ColossusRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
     Offset += StackSize;
   }
 
+  MachineBasicBlock &MBB = *MI.getParent();
+  DebugLoc dl = MI.getDebugLoc();
+
   // Handle DBG_VALUE and INLINEASM instructions.
   if (MI.isDebugValue() || MI.isInlineAsm()) {
     MI.getOperand(FIOperandNum).ChangeToRegister(FrameReg, false /*isDef*/);
     MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
-    return;
-  }
 
-  MachineBasicBlock &MBB = *MI.getParent();
-  DebugLoc dl = MI.getDebugLoc();
+    // Erase the old instruction.
+    MBB.erase(II);
+    return true;
+  }
 
   MachineOperand &OffsetOperand = MI.getOperand(FIOperandNum + 1);
   if (OffsetOperand.isImm()) {
@@ -496,9 +499,6 @@ void ColossusRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   }
   // Erase the old instruction.
   MBB.erase(II);
-}
 
-bool ColossusRegisterInfo::isConstantPhysReg(MCRegister PhysReg) const {
-  return PhysReg == Colossus::AZERO || PhysReg == Colossus::MZERO ||
-         PhysReg == Colossus::AZEROS || PhysReg == Colossus::AQZERO;
+  return true;
 }

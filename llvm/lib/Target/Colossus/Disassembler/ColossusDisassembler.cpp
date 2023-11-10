@@ -180,7 +180,7 @@ static DecodeStatus DecodeMRPairRegisterClass(MCInst &Inst,
       Colossus::MD5
   };
 
-  if (RegNo >= array_lengthof(RegPairDecoderTable) * 2 || RegNo & 1)
+  if (RegNo >= std::size(RegPairDecoderTable) * 2 || RegNo & 1)
     return MCDisassembler::Fail;
 
   Inst.addOperand(MCOperand::createReg(RegPairDecoderTable[RegNo >> 1]));
@@ -217,7 +217,7 @@ static DecodeStatus DecodeARPairRegisterClass(MCInst &Inst,
     }
     RegNo = RegNo == 14 ? 15 : RegNo >> 1;
 
-    if (RegNo >= array_lengthof(RegPairDecoderTable)) {
+    if (RegNo >= std::size(RegPairDecoderTable)) {
       return MCDisassembler::Fail;
   }
   Inst.addOperand(MCOperand::createReg(RegPairDecoderTable[RegNo]));

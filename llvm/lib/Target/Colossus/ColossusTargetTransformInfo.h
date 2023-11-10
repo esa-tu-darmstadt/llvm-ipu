@@ -92,7 +92,7 @@ public:
   // Allow misaligned vectorized loads and stores for Colossus.
   bool allowsMisalignedMemoryAccesses(LLVMContext &Context, unsigned BitWidth,
                                       unsigned AddressSpace, Align Alignment,
-                                      bool *Fast) {
+                                      unsigned *Fast) {
     *Fast = true; // Colossus' {ld|st}64 is faster than consecutive 
                   // two {ld|st}32
     return true;
@@ -122,7 +122,7 @@ public:
 
   unsigned getMinVectorRegisterBitWidth() const { return 32; }
 
-  unsigned getMaxInterleaveFactor(unsigned VF) const { return 1; }
+  unsigned getMaxInterleaveFactor(ElementCount VF) const { return 1; }
 
   InstructionCost getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
                                         TTI::TargetCostKind CostKind);
@@ -149,7 +149,8 @@ public:
   /// holds the instruction doing the access.
   InstructionCost getMemoryOpCost(unsigned Opcode, Type *Src,
                                   MaybeAlign Alignment, unsigned AddressSpace,
-                                  TTI::TargetCostKind CostKind,
+                                  TTI::TargetCostKind CostKind, 
+                                  TTI::OperandValueInfo OpdInfo = {TTI::OK_AnyValue, TTI::OP_None},
                                   const Instruction *I = nullptr);
 
   bool areInlineCompatible(const Function *Caller,

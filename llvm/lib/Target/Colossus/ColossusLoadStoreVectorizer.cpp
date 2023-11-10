@@ -419,8 +419,8 @@ bool Vectorizer::areConsecutivePointers(Value *PtrA, Value *PtrB,
   // stripAndAccumulateInBoundsConstantOffsets should properly handle a
   // possible overflow and the value should fit into a smallest data type
   // used in the cast/gep chain.
-  assert(OffsetA.getMinSignedBits() <= NewPtrBitWidth &&
-         OffsetB.getMinSignedBits() <= NewPtrBitWidth);
+  assert(OffsetA.getNumSignBits() <= NewPtrBitWidth &&
+         OffsetB.getNumSignBits() <= NewPtrBitWidth);
 
   OffsetA = OffsetA.sextOrTrunc(NewPtrBitWidth);
   OffsetB = OffsetB.sextOrTrunc(NewPtrBitWidth);
@@ -1131,7 +1131,7 @@ bool Vectorizer::vectorizeStoreChain(
     LLVM_DEBUG(dbgs() << "LSV: Chain doesn't match with the vector factor."
                          " Creating two separate arrays.\n");
     return vectorizeStoreChain(Chain.slice(0, TargetVF),
-                               InstructionsProcessed) |
+                               InstructionsProcessed) ||
            vectorizeStoreChain(Chain.slice(TargetVF), InstructionsProcessed);
   }
 
@@ -1149,7 +1149,7 @@ bool Vectorizer::vectorizeStoreChain(
   if (accessIsMisaligned(SzInBytes, AS, Alignment)) {
     if (S0->getPointerAddressSpace() != DL.getAllocaAddrSpace()) {
       auto Chains = splitOddVectorElts(Chain, Sz);
-      return vectorizeStoreChain(Chains.first, InstructionsProcessed) |
+      return vectorizeStoreChain(Chains.first, InstructionsProcessed) ||
              vectorizeStoreChain(Chains.second, InstructionsProcessed);
     }
 
@@ -1164,7 +1164,7 @@ bool Vectorizer::vectorizeStoreChain(
 
   if (!TTI.isLegalToVectorizeStoreChain(SzInBytes, Alignment, AS)) {
     auto Chains = splitOddVectorElts(Chain, Sz);
-    return vectorizeStoreChain(Chains.first, InstructionsProcessed) |
+    return vectorizeStoreChain(Chains.first, InstructionsProcessed) ||
            vectorizeStoreChain(Chains.second, InstructionsProcessed);
   }
 
@@ -1282,7 +1282,7 @@ bool Vectorizer::vectorizeLoadChain(
   if (ChainSize > VF || (VF != TargetVF && TargetVF < ChainSize)) {
     LLVM_DEBUG(dbgs() << "LSV: Chain doesn't match with the vector factor."
                          " Creating two separate arrays.\n");
-    return vectorizeLoadChain(Chain.slice(0, TargetVF), InstructionsProcessed) |
+    return vectorizeLoadChain(Chain.slice(0, TargetVF), InstructionsProcessed) ||
            vectorizeLoadChain(Chain.slice(TargetVF), InstructionsProcessed);
   }
 
@@ -1294,7 +1294,7 @@ bool Vectorizer::vectorizeLoadChain(
   if (accessIsMisaligned(SzInBytes, AS, Alignment)) {
     if (L0->getPointerAddressSpace() != DL.getAllocaAddrSpace()) {
       auto Chains = splitOddVectorElts(Chain, Sz);
-      return vectorizeLoadChain(Chains.first, InstructionsProcessed) |
+      return vectorizeLoadChain(Chains.first, InstructionsProcessed) ||
              vectorizeLoadChain(Chains.second, InstructionsProcessed);
     }
 
@@ -1309,7 +1309,7 @@ bool Vectorizer::vectorizeLoadChain(
 
   if (!TTI.isLegalToVectorizeLoadChain(SzInBytes, Alignment, AS)) {
     auto Chains = splitOddVectorElts(Chain, Sz);
-    return vectorizeLoadChain(Chains.first, InstructionsProcessed) |
+    return vectorizeLoadChain(Chains.first, InstructionsProcessed) ||
            vectorizeLoadChain(Chains.second, InstructionsProcessed);
   }
 
@@ -1404,7 +1404,7 @@ bool Vectorizer::accessIsMisaligned(unsigned SzInBytes, unsigned AddressSpace,
   if (Alignment.value() % SzInBytes == 0)
     return false;
 
-  bool Fast = false;
+  unsigned Fast = false;
   bool Allows = TTI.allowsMisalignedMemoryAccesses(F.getParent()->getContext(),
                                                    SzInBytes * 8, AddressSpace,
                                                    Alignment, &Fast);

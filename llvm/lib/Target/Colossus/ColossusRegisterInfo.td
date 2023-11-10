@@ -80,6 +80,7 @@ def SP : R<11, "$m11", ["$sp"]>, DwarfRegNum<[11]>;
 def MWORKER_BASE : R<12, "$m12", ["$mworker_base"]>, DwarfRegNum<[12]>;
 def MVERTEX_BASE : R<13, "$m13", ["$mvertex_base"]>, DwarfRegNum<[13]>;
 
+let isConstant = true in
 def MZERO : R<15, "$m15", ["$mzero"]>, DwarfRegNum<[15]>;
 
 // Arithmetic registers.
@@ -87,6 +88,7 @@ foreach i = 0 - 14 in {
   def A#i : R<i, "$a"#i>, DwarfRegNum<[!add(i, 15)]>;
 }
 
+let isConstant = true in
 def AZERO : R<15, "$a15", ["$azero"]>, DwarfRegNum<[31]>;
 
 // Aliases of the M/A registers (consecutive pairs) used for 64-bit load and
@@ -110,6 +112,8 @@ def AD3 : RP<3, "$a6:7",   [A6,  A7], ["$ap3"]>,  DwarfRegNum<[43]>;
 def AD4 : RP<4,  "$a8:9",   [A8,  A9], ["$ap4"]>,  DwarfRegNum<[44]>;
 def AD5 : RP<5, "$a10:11", [A10, A11], ["$ap5"]>, DwarfRegNum<[45]>;
 def AD6 : RP<6, "$a12:13", [A12, A13], ["$ap6"]>, DwarfRegNum<[46]>;
+
+let isConstant = true in
 def AZEROS : RP<15, "$a14:15", [A14, AZERO], ["$azeros", "$ap15"]>, DwarfRegNum<[47]>;
 
 // Accumulator registers.
@@ -195,6 +199,8 @@ class ROU<bits<16> num, string n> :
 def AQ0 : RQ<0, "$a0:3",   [AD0, AD1], ["$aq0"]>, DwarfRegNum<[48]>;
 def AQ1 : RQ<1, "$a4:7",   [AD2, AD3], ["$aq1"]>, DwarfRegNum<[49]>;
 def AQ2 : RQ<2, "$a8:11",  [AD4, AD5], ["$aq2"]>, DwarfRegNum<[50]>;
+
+let isConstant = true in
 def AQZERO : RQ<15, "$a12:15", [AD6, AZEROS], ["$aq15"]>, DwarfRegNum<[51]>;
 
 def ACCQ0 : RQ<0, "0:3", [ACCD0, ACCD1]>, DwarfRegNum<[64]>;

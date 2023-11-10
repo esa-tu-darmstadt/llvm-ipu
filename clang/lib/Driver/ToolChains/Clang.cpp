@@ -2458,8 +2458,8 @@ void Clang::AddColossusTargetArgs(const ArgList &Args,
   if (Args.hasArg(options::OPT_msupervisor)) {
     CmdArgs.push_back("-D__SUPERVISOR__");
   } else {
-    CmdArgs.push_back("-fnative-half-type");
-    CmdArgs.push_back("-fallow-half-arguments-and-returns");
+    // CmdArgs.push_back("-fnative-half-type");
+    // CmdArgs.push_back("-fallow-half-arguments-and-returns");
   }
 }
 // IPU local patch end

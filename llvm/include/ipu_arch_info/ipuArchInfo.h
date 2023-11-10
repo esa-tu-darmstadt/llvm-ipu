@@ -25,6 +25,6 @@ struct IPUArchInfo {
   }
 };
 
-extern "C" LLVM_EXTERNAL_VISIBILITY const IPUArchInfo &ipuArchInfoByName(const std::string &archName);
+extern "C" LLVM_EXTERNAL_VISIBILITY const IPUArchInfo *ipuArchInfoByName(const std::string &archName);
 
 #endif // _ipuArchInfo_h_

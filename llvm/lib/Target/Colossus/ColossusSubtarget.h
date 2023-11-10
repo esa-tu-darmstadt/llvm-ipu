@@ -127,7 +127,6 @@ public:
 
   StringRef getArchName() const {
     switch (ColossusArchVersion) {
-    default:
     case ColossusArchEnum::Ipu1:
       return "ipu1";
     case ColossusArchEnum::Ipu2:
@@ -161,7 +160,7 @@ public:
   bool useDFAforSMS() const override { return false; }
 
   const IPUArchInfo &getIPUArchInfo() const {
-    return ipuArchInfoByName(getArchName().str());
+    return *ipuArchInfoByName(getArchName().str());
   }
 };
 } // End llvm namespace

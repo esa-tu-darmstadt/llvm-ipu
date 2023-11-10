@@ -49,9 +49,9 @@ public:
   ColossusTargetMachine(const Target &T, const Triple &TT,
                         StringRef CPU, StringRef FS,
                         const TargetOptions &Options,
-                        Optional<Reloc::Model> RM,
-                        Optional<CodeModel::Model> CM,
-                        CodeGenOpt::Level OL, bool JIT);
+                        std::optional<Reloc::Model> RM,
+                        std::optional<CodeModel::Model> CM,
+                        CodeGenOptLevel OL, bool JIT);
   ~ColossusTargetMachine() override;
 
   const ColossusSubtarget *getSubtargetImpl() const = delete;
@@ -59,7 +59,6 @@ public:
 
   // Pass Pipeline Configuration
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
-  void adjustPassManager(PassManagerBuilder &PMB) override;
   void registerPassBuilderCallbacks(PassBuilder &PB) override;
 
   TargetTransformInfo getTargetTransformInfo(const Function &F) const override;

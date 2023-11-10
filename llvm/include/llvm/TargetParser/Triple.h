@@ -55,6 +55,9 @@ public:
     avr,            // AVR: Atmel AVR microcontroller
     bpfel,          // eBPF or extended BPF or 64-bit BPF (little endian)
     bpfeb,          // eBPF or extended BPF or 64-bit BPF (big endian)
+    // IPU local patch begin
+    colossus,       // Colossus: colossus
+    // IPU local patch end
     csky,           // CSKY: csky
     dxil,           // DXIL 32-bit DirectX bytecode
     hexagon,        // Hexagon: hexagon
@@ -992,6 +995,11 @@ public:
     EnvironmentType Env = getEnvironment();
     return Env == Triple::GNUX32 || Env == Triple::MuslX32;
   }
+
+  // IPU local patch begin
+  /// Tests whether the target is Colossus.
+  bool isColossus() const { return getArch() == Triple::colossus; }
+  // IPU local patch end
 
   /// Tests whether the target is eBPF.
   bool isBPF() const {

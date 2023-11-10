@@ -90,17 +90,17 @@ let TargetPrefix = "colossus" in {
   // v2i32, v4i16 is not well tested
   def int_colossus_ststep :
     Intrinsic<
-      [LLVMPointerType<llvm_i8_ty>],      // return address + sizeof(ty) * stride
+      [llvm_ptr_ty],      // return address + sizeof(ty) * stride
       [llvm_any_ty,                       // value
-       LLVMPointerType<llvm_i8_ty>,       // address
+       llvm_ptr_ty,       // address
        llvm_i32_ty],                      // stride
       [IntrWriteMem, IntrArgMemOnly]>;
 
   def int_colossus_ldstep :
     Intrinsic<
       [llvm_any_ty,                        // value
-       LLVMPointerType<LLVMMatchType<0>>], // address + sizeof(ty) * stride
-      [LLVMPointerType<LLVMMatchType<0>>,  // address
+       llvm_ptr_ty], // address + sizeof(ty) * stride
+      [llvm_ptr_ty,  // address
       llvm_i32_ty],                        // stride
     [IntrReadMem, IntrArgMemOnly]>;
 

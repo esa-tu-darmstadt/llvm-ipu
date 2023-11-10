@@ -176,13 +176,12 @@ template <class T, unsigned N> void resetSmallVector(SmallVector<T, N> &v) {
 }
 
 void elf::reset() {
-  resetSmallVector(inputSections);
   resetSmallVector(outputSections);
-  resetSmallVector(ctx->binaryFiles);
-  resetSmallVector(ctx->bitcodeFiles);
-  resetSmallVector(ctx->lazyBitcodeFiles);
-  resetSmallVector(ctx->objectFiles);
-  resetSmallVector(ctx->sharedFiles);
+  resetSmallVector(ctx.binaryFiles);
+  resetSmallVector(ctx.bitcodeFiles);
+  resetSmallVector(ctx.lazyBitcodeFiles);
+  resetSmallVector(ctx.objectFiles);
+  resetSmallVector(ctx.sharedFiles);
   partitions.shrink_to_fit();
 }
 // IPU local patch end

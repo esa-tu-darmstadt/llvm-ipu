@@ -66,7 +66,7 @@ public:
 };
 } // namespace
 
-Colossus::Colossus() : IAI(ipuArchInfoByName(getCPU())) {
+Colossus::Colossus() : IAI(*ipuArchInfoByName(getCPU())) {
   defaultImageBase = IAI.TMEM_REGION0_BASE_ADDR;
   defaultMaxPageSize = 4;
 }
@@ -74,23 +74,23 @@ Colossus::Colossus() : IAI(ipuArchInfoByName(getCPU())) {
 uint32_t Colossus::calcEFlags() const {
   // If there are only binary input files (from -b binary), use a
   // value of 0 for the ELF header flags.
-  if (ctx->objectFiles.empty())
+  if (ctx.objectFiles.empty())
     return 0;
 
-  uint32_t target = cast<ObjFile<ELF32LE>>(ctx->objectFiles.front())
+  uint32_t target = cast<ObjFile<ELF32LE>>(ctx.objectFiles.front())
                         ->getObj()
                         .getHeader()
                         .e_flags &
                     EF_GRAPHCORE_ARCH;
 
-  for (InputFile *f : ctx->objectFiles) {
+  for (InputFile *f : ctx.objectFiles) {
     assert(config->ekind == ELF32LEKind);
     uint32_t eflags = cast<ObjFile<ELF32LE>>(f)->getObj().getHeader().e_flags &
                       EF_GRAPHCORE_ARCH;
     if (eflags && target && eflags != target) {
       warn(toString(f) +
            "Cannot link object files compiled for different IPU arch" +
-           toString(ctx->objectFiles.front()));
+           toString(ctx.objectFiles.front()));
     }
   }
   return target;

@@ -86,7 +86,7 @@ char ColossusLoopConversion::ID = 0;
 
 INITIALIZE_PASS_BEGIN(ColossusLoopConversion, DEBUG_TYPE, PASS_NAME, false,
                       false)
-INITIALIZE_PASS_DEPENDENCY(HardwareLoops)
+INITIALIZE_PASS_DEPENDENCY(HardwareLoopsLegacy)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_END(ColossusLoopConversion, DEBUG_TYPE, PASS_NAME, false, false)
 
