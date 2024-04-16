@@ -1,5 +1,5 @@
-; RUN: llvm-link %isdopc %s | opt -instcombine -always-inline -mattr=+ipu1 | llc -march=colossus -colossus-coissue=false -mattr=+ipu1 | FileCheck %s
-; RUN: llvm-link %isdopc %s | opt -instcombine -always-inline -mattr=+ipu2 | llc -march=colossus -colossus-coissue=false -mattr=+ipu2 | FileCheck %s
+; RUN: llvm-link %isdopc %s | opt --passes='function(instcombine),always-inline' -mattr=+ipu1 | llc -march=colossus -colossus-coissue=false -mattr=+ipu1 | FileCheck %s
+; RUN: llvm-link %isdopc %s | opt --passes='function(instcombine),always-inline' -mattr=+ipu2 | llc -march=colossus -colossus-coissue=false -mattr=+ipu2 | FileCheck %s
 
 ; Uses SORT4X16LO instead of insertelement to broadcast the scalar. This avoids
 ; an upstream optimisation in LowerFormalArguments, see T3117 for details

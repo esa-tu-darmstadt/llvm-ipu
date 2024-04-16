@@ -1,6 +1,8 @@
 #include "ColossusAsmParser.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCObjectFileInfo.h"
+#include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCRegister.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/SourceMgr.h"
@@ -84,10 +86,10 @@ TEST_F(ColossusAsmParserTest, ParseMRFRegisters) {
         Colossus::MVERTEX_BASE, Colossus::M14, Colossus::MZERO}) {
     parser->Lex();
     SMLoc S, E;
-    unsigned reg;
-    OperandMatchResultTy res;
+    MCRegister reg;
+    ParseStatus res;
     res = tap->tryParseRegister(reg, S, E);
-    ASSERT_EQ(res, MatchOperand_Success);
+    ASSERT_EQ(res.isSuccess(), true);
     ASSERT_EQ(reg, expected_reg);
   }
 }
@@ -101,10 +103,10 @@ TEST_F(ColossusAsmParserTest, ParseMRpairs) {
         Colossus::MD4, Colossus::MD5, Colossus::MD6, Colossus::MD7}) {
     parser->Lex();
     SMLoc S, E;
-    unsigned reg;
-    OperandMatchResultTy res;
+    MCRegister reg;
+    ParseStatus res;
     res = tap->tryParseRegister(reg, S, E);
-    ASSERT_EQ(res, MatchOperand_Success);
+    ASSERT_EQ(res.isSuccess(), true);
     ASSERT_EQ(reg, expected_reg);
   }
 }
@@ -120,10 +122,10 @@ TEST_F(ColossusAsmParserTest, ParseARFRegisters) {
         Colossus::A14, Colossus::AZERO}) {
     parser->Lex();
     SMLoc S, E;
-    unsigned reg;
-    OperandMatchResultTy res;
+    MCRegister reg;
+    ParseStatus res;
     res = tap->tryParseRegister(reg, S, E);
-    ASSERT_EQ(res, MatchOperand_Success);
+    ASSERT_EQ(res.isSuccess(), true);
     ASSERT_EQ(reg, expected_reg);
   }
 }
@@ -137,10 +139,10 @@ TEST_F(ColossusAsmParserTest, ParseARpairs) {
         Colossus::AD4, Colossus::AD5, Colossus::AD6, Colossus::AZEROS}) {
     parser->Lex();
     SMLoc S, E;
-    unsigned reg;
-    OperandMatchResultTy res;
+    MCRegister reg;
+    ParseStatus res;
     res = tap->tryParseRegister(reg, S, E);
-    ASSERT_EQ(res, MatchOperand_Success);
+    ASSERT_EQ(res.isSuccess(), true);
     ASSERT_EQ(reg, expected_reg);
   }
 }
@@ -152,10 +154,10 @@ TEST_F(ColossusAsmParserTest, ParseARquads) {
        {Colossus::AQ0, Colossus::AQ1, Colossus::AQ2, Colossus::AQZERO}) {
     parser->Lex();
     SMLoc S, E;
-    unsigned reg;
-    OperandMatchResultTy res;
+    MCRegister reg;
+    ParseStatus res;
     res = tap->tryParseRegister(reg, S, E);
-    ASSERT_EQ(res, MatchOperand_Success);
+    ASSERT_EQ(res.isSuccess(), true);
     ASSERT_EQ(reg, expected_reg);
   }
 }
@@ -166,10 +168,10 @@ TEST_F(ColossusAsmParserTest, ParseARoctads) {
   for (auto expected_reg : {Colossus::AO0, Colossus::AOZERO}) {
     parser->Lex();
     SMLoc S, E;
-    unsigned reg;
-    OperandMatchResultTy res;
+    MCRegister reg;
+    ParseStatus res;
     res = tap->tryParseRegister(reg, S, E);
-    ASSERT_EQ(res, MatchOperand_Success);
+    ASSERT_EQ(res.isSuccess(), true);
     ASSERT_EQ(reg, expected_reg);
   }
 }

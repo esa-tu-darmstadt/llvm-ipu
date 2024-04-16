@@ -1,5 +1,5 @@
-; RUN: llvm-link %isdopc %s | opt -instcombine -always-inline -mattr=+ipu1 | llc -march=colossus -colossus-coissue=false -mattr=+ipu1 | FileCheck %s
-; RUN: llvm-link %isdopc %s | opt -instcombine -always-inline -mattr=+ipu2 | llc -march=colossus -colossus-coissue=false -mattr=+ipu2 | FileCheck %s
+; RUN: llvm-link %isdopc %s | opt --passes='function(instcombine),always-inline' -mattr=+ipu1 | llc -march=colossus -colossus-coissue=false -mattr=+ipu1 | FileCheck %s
+; RUN: llvm-link %isdopc %s | opt --passes='function(instcombine),always-inline' -mattr=+ipu2 | llc -march=colossus -colossus-coissue=false -mattr=+ipu2 | FileCheck %s
 
 @ISD_AND = external constant i32
 @ISD_OR = external constant i32

@@ -1,5 +1,5 @@
-; RUN: llvm-link %isdopc %s | opt -instcombine -always-inline -mattr=+ipu1 | llc -march=colossus -colossus-coissue=false -mattr=+ipu1 | FileCheck %s
-; RUN: llvm-link %isdopc %s | opt -instcombine -always-inline -mattr=+ipu2 | llc -march=colossus -colossus-coissue=false -mattr=+ipu2 | FileCheck %s
+; RUN: llvm-link %isdopc %s | opt --passes='function(instcombine),always-inline' -mattr=+ipu1 | llc -march=colossus -colossus-coissue=false -mattr=+ipu1 | FileCheck %s
+; RUN: llvm-link %isdopc %s | opt --passes='function(instcombine),always-inline' -mattr=+ipu2 | llc -march=colossus -colossus-coissue=false -mattr=+ipu2 | FileCheck %s
 
 ; There is test coverage in xxx-arithmetic to check that integers that are
 ; bitcast to floats are successfully matched to ColossusISD nodes.

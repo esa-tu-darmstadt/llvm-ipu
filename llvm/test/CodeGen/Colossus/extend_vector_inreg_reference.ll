@@ -1,6 +1,6 @@
 ; XFAIL: *
-; RUN: llvm-link %isdopc %s | opt -instcombine -always-inline | llc -march=colossus -o %t.this
-; RUN: llvm-link %isdopc %S/extend_vector_inreg.ll | opt -instcombine -always-inline | llc -march=colossus -o %t.other
+; RUN: llvm-link %isdopc %s | opt --passes='function(instcombine),always-inline' | llc -march=colossus -o %t.this
+; RUN: llvm-link %isdopc %S/extend_vector_inreg.ll | opt --passes='function(instcombine),always-inline' | llc -march=colossus -o %t.other
 ; RUN: diff %t.this %t.other
 target triple = "colossus-graphcore--elf"
 

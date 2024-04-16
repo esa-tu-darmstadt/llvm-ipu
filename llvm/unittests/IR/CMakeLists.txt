@@ -6,6 +6,7 @@ set(LLVM_LINK_COMPONENTS
   Passes
   TransformUtils
   ScalarOpts
+  TargetParser
   )
 
 add_llvm_unittest(IRTests

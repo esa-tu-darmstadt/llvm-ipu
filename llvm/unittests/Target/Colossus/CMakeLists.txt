@@ -16,6 +16,7 @@ set(LLVM_LINK_COMPONENTS
   Support
   Core
   Target
+  TargetParser
 )
 
 add_llvm_target_unittest(ColossusTests

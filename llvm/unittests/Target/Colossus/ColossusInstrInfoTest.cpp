@@ -70,7 +70,7 @@ public:
 
     TargetOptions Options;
     auto TM = static_cast<LLVMTargetMachine *>(target->createTargetMachine(
-        "Colossus", "", "", Options, None, None, CodeGenOpt::Aggressive));
+        "Colossus", "", "", Options, std::nullopt, std::nullopt, CodeGenOptLevel::Aggressive));
 
     auto Type = FunctionType::get(Type::getVoidTy(C), false);
 
@@ -175,7 +175,7 @@ TEST_F(ColossusInstrInfoTest, TestloadRegFromStackSlotPair) {
   MCRegister dest(Colossus::AD0);
   auto FrameIdx = MFI.CreateStackObject(4u, Align(1), true);
   CII.loadRegFromStackSlot(*MBB, MBB->begin(), dest, FrameIdx,
-        &Colossus::ARPairRegClass, nullptr);
+        &Colossus::ARPairRegClass, nullptr, Register());
 
   auto I = MBB->begin();
   ASSERT_EQ(Colossus::LD64_A_FI, I->getOpcode());
@@ -192,7 +192,7 @@ TEST_F(ColossusInstrInfoTest, TestStoreRegToStackSlotPair) {
   MCRegister src(Colossus::AD0);
   auto FrameIdx = MFI.CreateStackObject(4u, Align(1), true);
   CII.storeRegToStackSlot(*MBB, MBB->begin(), src, false, 
-        FrameIdx, &Colossus::ARPairRegClass, nullptr);
+        FrameIdx, &Colossus::ARPairRegClass, nullptr, Register());
 
   auto I = MBB->begin();
   ASSERT_EQ(Colossus::ST64_A_FI, I->getOpcode());

@@ -76,6 +76,7 @@ add_llvm_target(ColossusCodeGen
   Support
   Scalar
   Target
+  TargetParser
   TransformUtils
 
   ADD_TO_COMPONENT

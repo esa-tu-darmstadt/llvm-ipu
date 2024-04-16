@@ -74,7 +74,7 @@ public:
 
     TargetOptions Options;
     TM.reset(static_cast<LLVMTargetMachine *>(target->createTargetMachine(
-        "Colossus", "", "", Options, None, None, CodeGenOpt::Aggressive)));
+        "Colossus", "", "", Options, std::nullopt, std::nullopt, CodeGenOptLevel::Aggressive)));
 
     M.setDataLayout(TM->createDataLayout());
   }
@@ -100,7 +100,7 @@ public:
     MachineFrameInfo &MFI = MF->getFrameInfo();
     MCRegister dest(destReg);
     auto FrameIdx = MFI.CreateStackObject(4u, Align(1), true);
-    CII.loadRegFromStackSlot(*MBB, MBB->begin(), dest, FrameIdx, &RC, nullptr);
+    CII.loadRegFromStackSlot(*MBB, MBB->begin(), dest, FrameIdx, &RC, nullptr, Register());
 
     CRI.eliminateFrameIndex(MBB->begin(), 0, 1);
     return MBB->begin();
@@ -113,7 +113,7 @@ public:
     MachineFrameInfo &MFI = MF->getFrameInfo();
     MCRegister src(srcReg);
     auto FrameIdx = MFI.CreateStackObject(4u, Align(1), true);
-    CII.storeRegToStackSlot(*MBB, MBB->begin(), src, true, FrameIdx, &RC, nullptr);
+    CII.storeRegToStackSlot(*MBB, MBB->begin(), src, true, FrameIdx, &RC, nullptr, Register());
 
     CRI.eliminateFrameIndex(MBB->begin(), 0, 1);
     return MBB->begin();
