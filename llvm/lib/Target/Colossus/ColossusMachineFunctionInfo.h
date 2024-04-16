@@ -38,7 +38,7 @@
 //                                | (caller writes)  |
 // Current frame:                 +==================+ <- BP
 //                                | BP spill area.   |
-//                                | 8 bytes in size  | <- BP spill (at BP - 8) 
+//                                | 8 bytes in size  | <- BP spill (at BP - 8)
 //                                +------------------+
 //                                | Frame alignment  | <- unknown size
 //                                +------------------+
@@ -73,17 +73,16 @@
 #ifndef LLVM_LIB_TARGET_COLOSSUS_COLOSSUSMACHINEFUNCTIONINFO_H
 #define LLVM_LIB_TARGET_COLOSSUS_COLOSSUSMACHINEFUNCTIONINFO_H
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/ADT/SmallVector.h"
 
 namespace llvm {
 
 // Forward declarations
 class Function;
 
-inline DebugLoc getDL(MachineBasicBlock &MBB,
-                      MachineBasicBlock::iterator MI) {
+inline DebugLoc getDL(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI) {
   if (MI != MBB.end() && !MI->isDebugValue()) {
     return MI->getDebugLoc();
   } else {
@@ -114,13 +113,18 @@ class ColossusFunctionInfo : public MachineFunctionInfo {
   int64_t LocalAreaOffset;
 
 public:
-  ColossusFunctionInfo() :
-    HasCall(false),
-    FPSpillSlotSet(false),
-    ScratchSize(0),
-    LocalAreaOffset(0) {}
+  ColossusFunctionInfo()
+      : HasCall(false), FPSpillSlotSet(false), ScratchSize(0),
+        LocalAreaOffset(0) {}
 
-  explicit ColossusFunctionInfo(MachineFunction &MF) : ColossusFunctionInfo() {}
+  explicit ColossusFunctionInfo(const Function &F,
+                                const TargetSubtargetInfo *STI)
+      : ColossusFunctionInfo() {}
+
+  MachineFunctionInfo *
+  clone(BumpPtrAllocator &Allocator, MachineFunction &DestMF,
+        const DenseMap<MachineBasicBlock *, MachineBasicBlock *> &Src2DstMBB)
+      const override;
 
   ~ColossusFunctionInfo() {}
 
@@ -131,9 +135,7 @@ public:
   void createBPSpillSlot(MachineFunction &MF);
   void createScratchSlot(MachineFunction &MF, const TargetRegisterClass *RC);
 
-  bool hasFPSpillSlot() const {
-    return FPSpillSlotSet;
-  }
+  bool hasFPSpillSlot() const { return FPSpillSlotSet; }
 
   int getFPSpillSlot() const {
     assert(FPSpillSlotSet && "FP spill slot not set");
@@ -145,22 +147,14 @@ public:
     return ScratchFrameIndex;
   }
 
-  void setLocalAreaOffset(int64_t Offset) {
-    LocalAreaOffset = Offset;
-  }
+  void setLocalAreaOffset(int64_t Offset) { LocalAreaOffset = Offset; }
 
-  int64_t getLocalAreaOffset() const {
-    return LocalAreaOffset;
-  }
+  int64_t getLocalAreaOffset() const { return LocalAreaOffset; }
 
-  void setVarArgsFrameIndex(int FrameIndex) {
-    VarArgsFrameIndex = FrameIndex;
-  }
+  void setVarArgsFrameIndex(int FrameIndex) { VarArgsFrameIndex = FrameIndex; }
 
-  int getVarArgsFrameIndex() const {
-    return VarArgsFrameIndex;
-  }
+  int getVarArgsFrameIndex() const { return VarArgsFrameIndex; }
 };
-} // End llvm namespace
+} // namespace llvm
 
 #endif

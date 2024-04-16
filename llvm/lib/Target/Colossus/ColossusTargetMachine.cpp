@@ -35,6 +35,7 @@
 #include "ColossusTargetMachine.h"
 #include "Colossus.h"
 #include "ColossusCountedLoopOptions.h"
+#include "ColossusMachineFunctionInfo.h"
 #include "ColossusMachineScheduler.h"
 #include "ColossusTargetObjectFile.h"
 #include "ColossusTargetTransformInfo.h"
@@ -104,12 +105,18 @@ ColossusTargetMachine::getSubtargetImpl(const Function &F) const {
   return I.get();
 }
 
+MachineFunctionInfo *ColossusTargetMachine::createMachineFunctionInfo(
+    BumpPtrAllocator &Allocator, const Function &F,
+    const TargetSubtargetInfo *STI) const {
+  return ColossusFunctionInfo::create<ColossusFunctionInfo>(Allocator, F, STI);
+}
+
 namespace {
 /// Colossus Code Generator Pass Configuration Options.
 class ColossusPassConfig : public TargetPassConfig {
 public:
   ColossusPassConfig(ColossusTargetMachine *TM, PassManagerBase &PM)
-    : TargetPassConfig(*TM, PM) {}
+      : TargetPassConfig(*TM, PM) {}
 
   ColossusTargetMachine &getColossusTargetMachine() const {
     return getTM<ColossusTargetMachine>();
@@ -170,7 +177,8 @@ void ColossusPassConfig::addPostRegAlloc() {
 
 bool ColossusPassConfig::addPreISel() {
   if (getOptLevel() != CodeGenOptLevel::None) {
-    addPass(new LoopDeletionPass());
+    // FIXME: Loop deletion pass is not registered.
+    // addPass(new LoopDeletionPass());
     addPass(createColossusLoopConversionPass());
     addPass(createCFGSimplificationPass());
   }

@@ -46,12 +46,11 @@ class ColossusTargetMachine : public LLVMTargetMachine {
   mutable StringMap<std::unique_ptr<ColossusSubtarget>> SubtargetMap;
 
 public:
-  ColossusTargetMachine(const Target &T, const Triple &TT,
-                        StringRef CPU, StringRef FS,
-                        const TargetOptions &Options,
+  ColossusTargetMachine(const Target &T, const Triple &TT, StringRef CPU,
+                        StringRef FS, const TargetOptions &Options,
                         std::optional<Reloc::Model> RM,
-                        std::optional<CodeModel::Model> CM,
-                        CodeGenOptLevel OL, bool JIT);
+                        std::optional<CodeModel::Model> CM, CodeGenOptLevel OL,
+                        bool JIT);
   ~ColossusTargetMachine() override;
 
   const ColossusSubtarget *getSubtargetImpl() const = delete;
@@ -65,6 +64,10 @@ public:
   TargetLoweringObjectFile *getObjFileLowering() const override {
     return TLOF.get();
   }
+
+  MachineFunctionInfo *
+  createMachineFunctionInfo(BumpPtrAllocator &Allocator, const Function &F,
+                            const TargetSubtargetInfo *STI) const override;
 };
 
 } // end namespace llvm

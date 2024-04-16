@@ -74,3 +74,10 @@ createScratchSlot(MachineFunction &MF, const TargetRegisterClass *RC) {
                                             RegInfo->getSpillAlign(*RC), false);
   ScratchSize = RegInfo->getSpillSize(*RC);
 }
+
+MachineFunctionInfo *ColossusFunctionInfo::clone(
+    BumpPtrAllocator &Allocator, MachineFunction &DestMF,
+    const DenseMap<MachineBasicBlock *, MachineBasicBlock *> &Src2DstMBB)
+    const {
+  return DestMF.cloneInfo<ColossusFunctionInfo>(*this);
+}
