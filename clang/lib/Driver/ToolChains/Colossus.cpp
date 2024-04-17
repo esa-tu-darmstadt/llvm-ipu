@@ -132,8 +132,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString("-lclang_rt.builtins-ipu"));
   }
 
-  const char *Exec =
-      Args.MakeArgString(getToolChain().GetProgramPath("gc-ld.lld"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
   C.addCommand(std::make_unique<Command>(
       JA, *this, ResponseFileSupport::AtFileCurCP(), Exec, CmdArgs, Inputs));
 }
