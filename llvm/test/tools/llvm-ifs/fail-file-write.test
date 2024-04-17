@@ -1,10 +1,8 @@
 # This file has been modified by Graphcore Ltd.
 ## Test failing to write output file on non-windows platforms.
 
-# IPU local patch begin
-# Test fails when run as root, as done in CI.
-# UNSUPPORTED: system-windows || true
-# IPU local patch end
+# UNSUPPORTED: system-windows
+# REQUIRES: non-root-user
 # RUN: rm -rf %t.TestDir
 # RUN: mkdir %t.TestDir
 # RUN: touch %t.TestDir/Output.TestFile

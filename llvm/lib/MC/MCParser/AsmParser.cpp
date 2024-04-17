@@ -46,6 +46,7 @@
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCSymbolMachO.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/MC/MCValue.h"
 #include "llvm/Support/Casting.h"
@@ -127,6 +128,7 @@ private:
   void *SavedDiagContext;
   std::unique_ptr<MCAsmParserExtension> PlatformParser;
   SMLoc StartTokLoc;
+  std::optional<SMLoc> CFIStartProcLoc;
 
   /// This is the current buffer index we're lexing from as managed by the
   /// SourceMgr object.
@@ -1238,7 +1240,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc,
 
     // Lookup the symbol variant if used.
     if (!Split.second.empty()) {
-      Variant = MCSymbolRefExpr::getVariantKindForName(Split.second);
+      Variant = getTargetParser().getVariantKindForName(Split.second);
       if (Variant != MCSymbolRefExpr::VK_Invalid) {
         SymbolName = Split.first;
       } else if (MAI.doesAllowAtInName() && !MAI.useParensForSymbolVariant()) {
@@ -1962,6 +1964,12 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
       Lex();
     }
 
+    if (MAI.hasSubsectionsViaSymbols() && CFIStartProcLoc &&
+        Sym->isExternal() && !cast<MCSymbolMachO>(Sym)->isAltEntry())
+      return Error(StartTokLoc, "non-private labels cannot appear between "
+                                ".cfi_startproc / .cfi_endproc pairs") &&
+             Error(*CFIStartProcLoc, "previous .cfi_startproc was here");
+
     if (discardLTOSymbol(IDVal))
       return false;
 
@@ -1998,7 +2006,7 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
   // Otherwise, we have a normal instruction or directive.
 
   // Directives start with "."
-  if (IDVal.startswith(".") && IDVal != ".") {
+  if (IDVal.starts_with(".") && IDVal != ".") {
     // There are several entities interested in parsing directives:
     //
     // 1. The target-specific assembly parser. Some directives are target
@@ -4206,6 +4214,8 @@ bool AsmParser::parseDirectiveCFISections() {
 /// parseDirectiveCFIStartProc
 /// ::= .cfi_startproc [simple]
 bool AsmParser::parseDirectiveCFIStartProc() {
+  CFIStartProcLoc = StartTokLoc;
+
   StringRef Simple;
   if (!parseOptionalToken(AsmToken::EndOfStatement)) {
     if (check(parseIdentifier(Simple) || Simple != "simple",
@@ -4226,8 +4236,11 @@ bool AsmParser::parseDirectiveCFIStartProc() {
 /// parseDirectiveCFIEndProc
 /// ::= .cfi_endproc
 bool AsmParser::parseDirectiveCFIEndProc() {
+  CFIStartProcLoc = std::nullopt;
+
   if (parseEOL())
     return true;
+
   getStreamer().emitCFIEndProc();
   return false;
 }

@@ -101,15 +101,25 @@ void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI, bool InParens) const {
   case MCExpr::Unary: {
     const MCUnaryExpr &UE = cast<MCUnaryExpr>(*this);
     switch (UE.getOpcode()) {
-    case MCUnaryExpr::LNot:  OS << '!'; break;
-    case MCUnaryExpr::Minus: OS << '-'; break;
-    case MCUnaryExpr::Not:   OS << '~'; break;
-    case MCUnaryExpr::Plus:  OS << '+'; break;
+    case MCUnaryExpr::LNot:
+      OS << '!';
+      break;
+    case MCUnaryExpr::Minus:
+      OS << '-';
+      break;
+    case MCUnaryExpr::Not:
+      OS << '~';
+      break;
+    case MCUnaryExpr::Plus:
+      OS << '+';
+      break;
     }
     bool Binary = UE.getSubExpr()->getKind() == MCExpr::Binary;
-    if (Binary) OS << "(";
+    if (Binary)
+      OS << "(";
     UE.getSubExpr()->print(OS, MAI);
-    if (Binary) OS << ")";
+    if (Binary)
+      OS << ")";
     return;
   }
 
@@ -135,27 +145,65 @@ void MCExpr::print(raw_ostream &OS, const MCAsmInfo *MAI, bool InParens) const {
         }
       }
 
-      OS <<  '+';
+      OS << '+';
       break;
-    case MCBinaryExpr::AShr: OS << ">>"; break;
-    case MCBinaryExpr::And:  OS <<  '&'; break;
-    case MCBinaryExpr::Div:  OS <<  '/'; break;
-    case MCBinaryExpr::EQ:   OS << "=="; break;
-    case MCBinaryExpr::GT:   OS <<  '>'; break;
-    case MCBinaryExpr::GTE:  OS << ">="; break;
-    case MCBinaryExpr::LAnd: OS << "&&"; break;
-    case MCBinaryExpr::LOr:  OS << "||"; break;
-    case MCBinaryExpr::LShr: OS << ">>"; break;
-    case MCBinaryExpr::LT:   OS <<  '<'; break;
-    case MCBinaryExpr::LTE:  OS << "<="; break;
-    case MCBinaryExpr::Mod:  OS <<  '%'; break;
-    case MCBinaryExpr::Mul:  OS <<  '*'; break;
-    case MCBinaryExpr::NE:   OS << "!="; break;
-    case MCBinaryExpr::Or:   OS <<  '|'; break;
-    case MCBinaryExpr::OrNot: OS << '!'; break;
-    case MCBinaryExpr::Shl:  OS << "<<"; break;
-    case MCBinaryExpr::Sub:  OS <<  '-'; break;
-    case MCBinaryExpr::Xor:  OS <<  '^'; break;
+    case MCBinaryExpr::AShr:
+      OS << ">>";
+      break;
+    case MCBinaryExpr::And:
+      OS << '&';
+      break;
+    case MCBinaryExpr::Div:
+      OS << '/';
+      break;
+    case MCBinaryExpr::EQ:
+      OS << "==";
+      break;
+    case MCBinaryExpr::GT:
+      OS << '>';
+      break;
+    case MCBinaryExpr::GTE:
+      OS << ">=";
+      break;
+    case MCBinaryExpr::LAnd:
+      OS << "&&";
+      break;
+    case MCBinaryExpr::LOr:
+      OS << "||";
+      break;
+    case MCBinaryExpr::LShr:
+      OS << ">>";
+      break;
+    case MCBinaryExpr::LT:
+      OS << '<';
+      break;
+    case MCBinaryExpr::LTE:
+      OS << "<=";
+      break;
+    case MCBinaryExpr::Mod:
+      OS << '%';
+      break;
+    case MCBinaryExpr::Mul:
+      OS << '*';
+      break;
+    case MCBinaryExpr::NE:
+      OS << "!=";
+      break;
+    case MCBinaryExpr::Or:
+      OS << '|';
+      break;
+    case MCBinaryExpr::OrNot:
+      OS << '!';
+      break;
+    case MCBinaryExpr::Shl:
+      OS << "<<";
+      break;
+    case MCBinaryExpr::Sub:
+      OS << '-';
+      break;
+    case MCBinaryExpr::Xor:
+      OS << '^';
+      break;
     }
 
     // Only print parens around the LHS if it is non-trivial.
@@ -210,8 +258,8 @@ MCSymbolRefExpr::MCSymbolRefExpr(const MCSymbol *Symbol, VariantKind Kind,
 }
 
 const MCSymbolRefExpr *MCSymbolRefExpr::create(const MCSymbol *Sym,
-                                               VariantKind Kind,
-                                               MCContext &Ctx, SMLoc Loc) {
+                                               VariantKind Kind, MCContext &Ctx,
+                                               SMLoc Loc) {
   return new (Ctx) MCSymbolRefExpr(Sym, Kind, Ctx.getAsmInfo(), Loc);
 }
 
@@ -222,6 +270,7 @@ const MCSymbolRefExpr *MCSymbolRefExpr::create(StringRef Name, VariantKind Kind,
 
 StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   switch (Kind) {
+    // clang-format off
   case VK_Invalid: return "<<invalid>>";
   case VK_None: return "<<none>>";
 
@@ -234,13 +283,16 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_GOTPCREL: return "GOTPCREL";
   case VK_GOTPCREL_NORELAX: return "GOTPCREL_NORELAX";
   case VK_GOTTPOFF: return "GOTTPOFF";
+  case VK_GOTTPOFF_FDPIC: return "gottpoff_fdpic";
   case VK_INDNTPOFF: return "INDNTPOFF";
   case VK_NTPOFF: return "NTPOFF";
   case VK_GOTNTPOFF: return "GOTNTPOFF";
   case VK_PLT: return "PLT";
   case VK_TLSGD: return "TLSGD";
+  case VK_TLSGD_FDPIC: return "tlsgd_fdpic";
   case VK_TLSLD: return "TLSLD";
   case VK_TLSLDM: return "TLSLDM";
+  case VK_TLSLDM_FDPIC: return "tlsldm_fdpic";
   case VK_TPOFF: return "TPOFF";
   case VK_TPREL: return "TPREL";
   case VK_TLSCALL: return "tlscall";
@@ -255,6 +307,9 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_SECREL: return "SECREL32";
   case VK_SIZE: return "SIZE";
   case VK_WEAKREF: return "WEAKREF";
+  case VK_FUNCDESC: return "FUNCDESC";
+  case VK_GOTFUNCDESC: return "GOTFUNCDESC";
+  case VK_GOTOFFFUNCDESC: return "GOTOFFFUNCDESC";
   case VK_X86_ABS8: return "ABS8";
   case VK_X86_PLTOFF: return "PLTOFF";
   case VK_ARM_NONE: return "none";
@@ -333,6 +388,10 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
     return "ie";
   case VK_PPC_AIX_TLSLE:
     return "le";
+  case VK_PPC_AIX_TLSLD:
+    return "ld";
+  case VK_PPC_AIX_TLSML:
+    return "ml";
   case VK_PPC_GOT_TLSLD: return "got@tlsld";
   case VK_PPC_GOT_TLSLD_LO: return "got@tlsld@l";
   case VK_PPC_GOT_TLSLD_HI: return "got@tlsld@h";
@@ -394,6 +453,7 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
   case VK_COLOSSUS_19_S2: return "abs19@s2";
   case VK_COLOSSUS_21: return "abs21";
   // IPU local patch end
+    // clang-format on
   }
   llvm_unreachable("Invalid variant kind");
 }
@@ -401,150 +461,143 @@ StringRef MCSymbolRefExpr::getVariantKindName(VariantKind Kind) {
 MCSymbolRefExpr::VariantKind
 MCSymbolRefExpr::getVariantKindForName(StringRef Name) {
   return StringSwitch<VariantKind>(Name.lower())
-    .Case("dtprel", VK_DTPREL)
-    .Case("dtpoff", VK_DTPOFF)
-    .Case("got", VK_GOT)
-    .Case("gotoff", VK_GOTOFF)
-    .Case("gotrel", VK_GOTREL)
-    .Case("pcrel", VK_PCREL)
-    .Case("gotpcrel", VK_GOTPCREL)
-    .Case("gotpcrel_norelax", VK_GOTPCREL_NORELAX)
-    .Case("gottpoff", VK_GOTTPOFF)
-    .Case("indntpoff", VK_INDNTPOFF)
-    .Case("ntpoff", VK_NTPOFF)
-    .Case("gotntpoff", VK_GOTNTPOFF)
-    .Case("plt", VK_PLT)
-    .Case("tlscall", VK_TLSCALL)
-    .Case("tlsdesc", VK_TLSDESC)
-    .Case("tlsgd", VK_TLSGD)
-    .Case("tlsld", VK_TLSLD)
-    .Case("tlsldm", VK_TLSLDM)
-    .Case("tpoff", VK_TPOFF)
-    .Case("tprel", VK_TPREL)
-    .Case("tlvp", VK_TLVP)
-    .Case("tlvppage", VK_TLVPPAGE)
-    .Case("tlvppageoff", VK_TLVPPAGEOFF)
-    .Case("page", VK_PAGE)
-    .Case("pageoff", VK_PAGEOFF)
-    .Case("gotpage", VK_GOTPAGE)
-    .Case("gotpageoff", VK_GOTPAGEOFF)
-    .Case("imgrel", VK_COFF_IMGREL32)
-    .Case("secrel32", VK_SECREL)
-    .Case("size", VK_SIZE)
-    .Case("abs8", VK_X86_ABS8)
-    .Case("pltoff", VK_X86_PLTOFF)
-    .Case("l", VK_PPC_LO)
-    .Case("h", VK_PPC_HI)
-    .Case("ha", VK_PPC_HA)
-    .Case("high", VK_PPC_HIGH)
-    .Case("higha", VK_PPC_HIGHA)
-    .Case("higher", VK_PPC_HIGHER)
-    .Case("highera", VK_PPC_HIGHERA)
-    .Case("highest", VK_PPC_HIGHEST)
-    .Case("highesta", VK_PPC_HIGHESTA)
-    .Case("got@l", VK_PPC_GOT_LO)
-    .Case("got@h", VK_PPC_GOT_HI)
-    .Case("got@ha", VK_PPC_GOT_HA)
-    .Case("local", VK_PPC_LOCAL)
-    .Case("tocbase", VK_PPC_TOCBASE)
-    .Case("toc", VK_PPC_TOC)
-    .Case("toc@l", VK_PPC_TOC_LO)
-    .Case("toc@h", VK_PPC_TOC_HI)
-    .Case("toc@ha", VK_PPC_TOC_HA)
-    .Case("u", VK_PPC_U)
-    .Case("l", VK_PPC_L)
-    .Case("tls", VK_PPC_TLS)
-    .Case("dtpmod", VK_PPC_DTPMOD)
-    .Case("tprel@l", VK_PPC_TPREL_LO)
-    .Case("tprel@h", VK_PPC_TPREL_HI)
-    .Case("tprel@ha", VK_PPC_TPREL_HA)
-    .Case("tprel@high", VK_PPC_TPREL_HIGH)
-    .Case("tprel@higha", VK_PPC_TPREL_HIGHA)
-    .Case("tprel@higher", VK_PPC_TPREL_HIGHER)
-    .Case("tprel@highera", VK_PPC_TPREL_HIGHERA)
-    .Case("tprel@highest", VK_PPC_TPREL_HIGHEST)
-    .Case("tprel@highesta", VK_PPC_TPREL_HIGHESTA)
-    .Case("dtprel@l", VK_PPC_DTPREL_LO)
-    .Case("dtprel@h", VK_PPC_DTPREL_HI)
-    .Case("dtprel@ha", VK_PPC_DTPREL_HA)
-    .Case("dtprel@high", VK_PPC_DTPREL_HIGH)
-    .Case("dtprel@higha", VK_PPC_DTPREL_HIGHA)
-    .Case("dtprel@higher", VK_PPC_DTPREL_HIGHER)
-    .Case("dtprel@highera", VK_PPC_DTPREL_HIGHERA)
-    .Case("dtprel@highest", VK_PPC_DTPREL_HIGHEST)
-    .Case("dtprel@highesta", VK_PPC_DTPREL_HIGHESTA)
-    .Case("got@tprel", VK_PPC_GOT_TPREL)
-    .Case("got@tprel@l", VK_PPC_GOT_TPREL_LO)
-    .Case("got@tprel@h", VK_PPC_GOT_TPREL_HI)
-    .Case("got@tprel@ha", VK_PPC_GOT_TPREL_HA)
-    .Case("got@dtprel", VK_PPC_GOT_DTPREL)
-    .Case("got@dtprel@l", VK_PPC_GOT_DTPREL_LO)
-    .Case("got@dtprel@h", VK_PPC_GOT_DTPREL_HI)
-    .Case("got@dtprel@ha", VK_PPC_GOT_DTPREL_HA)
-    .Case("got@tlsgd", VK_PPC_GOT_TLSGD)
-    .Case("got@tlsgd@l", VK_PPC_GOT_TLSGD_LO)
-    .Case("got@tlsgd@h", VK_PPC_GOT_TLSGD_HI)
-    .Case("got@tlsgd@ha", VK_PPC_GOT_TLSGD_HA)
-    .Case("got@tlsld", VK_PPC_GOT_TLSLD)
-    .Case("got@tlsld@l", VK_PPC_GOT_TLSLD_LO)
-    .Case("got@tlsld@h", VK_PPC_GOT_TLSLD_HI)
-    .Case("got@tlsld@ha", VK_PPC_GOT_TLSLD_HA)
-    .Case("got@pcrel", VK_PPC_GOT_PCREL)
-    .Case("got@tlsgd@pcrel", VK_PPC_GOT_TLSGD_PCREL)
-    .Case("got@tlsld@pcrel", VK_PPC_GOT_TLSLD_PCREL)
-    .Case("got@tprel@pcrel", VK_PPC_GOT_TPREL_PCREL)
-    .Case("tls@pcrel", VK_PPC_TLS_PCREL)
-    .Case("notoc", VK_PPC_NOTOC)
-    .Case("gdgot", VK_Hexagon_GD_GOT)
-    .Case("gdplt", VK_Hexagon_GD_PLT)
-    .Case("iegot", VK_Hexagon_IE_GOT)
-    .Case("ie", VK_Hexagon_IE)
-    .Case("ldgot", VK_Hexagon_LD_GOT)
-    .Case("ldplt", VK_Hexagon_LD_PLT)
-    .Case("none", VK_ARM_NONE)
-    .Case("got_prel", VK_ARM_GOT_PREL)
-    .Case("target1", VK_ARM_TARGET1)
-    .Case("target2", VK_ARM_TARGET2)
-    .Case("prel31", VK_ARM_PREL31)
-    .Case("sbrel", VK_ARM_SBREL)
-    .Case("tlsldo", VK_ARM_TLSLDO)
-    .Case("lo8", VK_AVR_LO8)
-    .Case("hi8", VK_AVR_HI8)
-    .Case("hlo8", VK_AVR_HLO8)
-    .Case("typeindex", VK_WASM_TYPEINDEX)
-    .Case("tbrel", VK_WASM_TBREL)
-    .Case("mbrel", VK_WASM_MBREL)
-    .Case("tlsrel", VK_WASM_TLSREL)
-    .Case("got@tls", VK_WASM_GOT_TLS)
-    .Case("funcindex", VK_WASM_FUNCINDEX)
-    .Case("gotpcrel32@lo", VK_AMDGPU_GOTPCREL32_LO)
-    .Case("gotpcrel32@hi", VK_AMDGPU_GOTPCREL32_HI)
-    .Case("rel32@lo", VK_AMDGPU_REL32_LO)
-    .Case("rel32@hi", VK_AMDGPU_REL32_HI)
-    .Case("rel64", VK_AMDGPU_REL64)
-    .Case("abs32@lo", VK_AMDGPU_ABS32_LO)
-    .Case("abs32@hi", VK_AMDGPU_ABS32_HI)
-    .Case("hi", VK_VE_HI32)
-    .Case("lo", VK_VE_LO32)
-    .Case("pc_hi", VK_VE_PC_HI32)
-    .Case("pc_lo", VK_VE_PC_LO32)
-    .Case("got_hi", VK_VE_GOT_HI32)
-    .Case("got_lo", VK_VE_GOT_LO32)
-    .Case("gotoff_hi", VK_VE_GOTOFF_HI32)
-    .Case("gotoff_lo", VK_VE_GOTOFF_LO32)
-    .Case("plt_hi", VK_VE_PLT_HI32)
-    .Case("plt_lo", VK_VE_PLT_LO32)
-    .Case("tls_gd_hi", VK_VE_TLS_GD_HI32)
-    .Case("tls_gd_lo", VK_VE_TLS_GD_LO32)
-    .Case("tpoff_hi", VK_VE_TPOFF_HI32)
-    .Case("tpoff_lo", VK_VE_TPOFF_LO32)
-    // IPU local patch begin
-    .Case("relative@16@s2", VK_COLOSSUS_RELATIVE_16_S2)
-    .Case("abs18@s2", VK_COLOSSUS_18_S2)
-    .Case("abs19@s2", VK_COLOSSUS_19_S2)
-    .Case("abs@21", VK_COLOSSUS_21)
-    // IPU local patch end
-    .Default(VK_Invalid);
+      .Case("dtprel", VK_DTPREL)
+      .Case("dtpoff", VK_DTPOFF)
+      .Case("got", VK_GOT)
+      .Case("gotoff", VK_GOTOFF)
+      .Case("gotrel", VK_GOTREL)
+      .Case("pcrel", VK_PCREL)
+      .Case("gotpcrel", VK_GOTPCREL)
+      .Case("gotpcrel_norelax", VK_GOTPCREL_NORELAX)
+      .Case("gottpoff", VK_GOTTPOFF)
+      .Case("indntpoff", VK_INDNTPOFF)
+      .Case("ntpoff", VK_NTPOFF)
+      .Case("gotntpoff", VK_GOTNTPOFF)
+      .Case("plt", VK_PLT)
+      .Case("tlscall", VK_TLSCALL)
+      .Case("tlsdesc", VK_TLSDESC)
+      .Case("tlsgd", VK_TLSGD)
+      .Case("tlsld", VK_TLSLD)
+      .Case("tlsldm", VK_TLSLDM)
+      .Case("tpoff", VK_TPOFF)
+      .Case("tprel", VK_TPREL)
+      .Case("tlvp", VK_TLVP)
+      .Case("tlvppage", VK_TLVPPAGE)
+      .Case("tlvppageoff", VK_TLVPPAGEOFF)
+      .Case("page", VK_PAGE)
+      .Case("pageoff", VK_PAGEOFF)
+      .Case("gotpage", VK_GOTPAGE)
+      .Case("gotpageoff", VK_GOTPAGEOFF)
+      .Case("imgrel", VK_COFF_IMGREL32)
+      .Case("secrel32", VK_SECREL)
+      .Case("size", VK_SIZE)
+      .Case("abs8", VK_X86_ABS8)
+      .Case("pltoff", VK_X86_PLTOFF)
+      .Case("l", VK_PPC_LO)
+      .Case("h", VK_PPC_HI)
+      .Case("ha", VK_PPC_HA)
+      .Case("high", VK_PPC_HIGH)
+      .Case("higha", VK_PPC_HIGHA)
+      .Case("higher", VK_PPC_HIGHER)
+      .Case("highera", VK_PPC_HIGHERA)
+      .Case("highest", VK_PPC_HIGHEST)
+      .Case("highesta", VK_PPC_HIGHESTA)
+      .Case("got@l", VK_PPC_GOT_LO)
+      .Case("got@h", VK_PPC_GOT_HI)
+      .Case("got@ha", VK_PPC_GOT_HA)
+      .Case("local", VK_PPC_LOCAL)
+      .Case("tocbase", VK_PPC_TOCBASE)
+      .Case("toc", VK_PPC_TOC)
+      .Case("toc@l", VK_PPC_TOC_LO)
+      .Case("toc@h", VK_PPC_TOC_HI)
+      .Case("toc@ha", VK_PPC_TOC_HA)
+      .Case("u", VK_PPC_U)
+      .Case("l", VK_PPC_L)
+      .Case("tls", VK_PPC_TLS)
+      .Case("dtpmod", VK_PPC_DTPMOD)
+      .Case("tprel@l", VK_PPC_TPREL_LO)
+      .Case("tprel@h", VK_PPC_TPREL_HI)
+      .Case("tprel@ha", VK_PPC_TPREL_HA)
+      .Case("tprel@high", VK_PPC_TPREL_HIGH)
+      .Case("tprel@higha", VK_PPC_TPREL_HIGHA)
+      .Case("tprel@higher", VK_PPC_TPREL_HIGHER)
+      .Case("tprel@highera", VK_PPC_TPREL_HIGHERA)
+      .Case("tprel@highest", VK_PPC_TPREL_HIGHEST)
+      .Case("tprel@highesta", VK_PPC_TPREL_HIGHESTA)
+      .Case("dtprel@l", VK_PPC_DTPREL_LO)
+      .Case("dtprel@h", VK_PPC_DTPREL_HI)
+      .Case("dtprel@ha", VK_PPC_DTPREL_HA)
+      .Case("dtprel@high", VK_PPC_DTPREL_HIGH)
+      .Case("dtprel@higha", VK_PPC_DTPREL_HIGHA)
+      .Case("dtprel@higher", VK_PPC_DTPREL_HIGHER)
+      .Case("dtprel@highera", VK_PPC_DTPREL_HIGHERA)
+      .Case("dtprel@highest", VK_PPC_DTPREL_HIGHEST)
+      .Case("dtprel@highesta", VK_PPC_DTPREL_HIGHESTA)
+      .Case("got@tprel", VK_PPC_GOT_TPREL)
+      .Case("got@tprel@l", VK_PPC_GOT_TPREL_LO)
+      .Case("got@tprel@h", VK_PPC_GOT_TPREL_HI)
+      .Case("got@tprel@ha", VK_PPC_GOT_TPREL_HA)
+      .Case("got@dtprel", VK_PPC_GOT_DTPREL)
+      .Case("got@dtprel@l", VK_PPC_GOT_DTPREL_LO)
+      .Case("got@dtprel@h", VK_PPC_GOT_DTPREL_HI)
+      .Case("got@dtprel@ha", VK_PPC_GOT_DTPREL_HA)
+      .Case("got@tlsgd", VK_PPC_GOT_TLSGD)
+      .Case("got@tlsgd@l", VK_PPC_GOT_TLSGD_LO)
+      .Case("got@tlsgd@h", VK_PPC_GOT_TLSGD_HI)
+      .Case("got@tlsgd@ha", VK_PPC_GOT_TLSGD_HA)
+      .Case("got@tlsld", VK_PPC_GOT_TLSLD)
+      .Case("got@tlsld@l", VK_PPC_GOT_TLSLD_LO)
+      .Case("got@tlsld@h", VK_PPC_GOT_TLSLD_HI)
+      .Case("got@tlsld@ha", VK_PPC_GOT_TLSLD_HA)
+      .Case("got@pcrel", VK_PPC_GOT_PCREL)
+      .Case("got@tlsgd@pcrel", VK_PPC_GOT_TLSGD_PCREL)
+      .Case("got@tlsld@pcrel", VK_PPC_GOT_TLSLD_PCREL)
+      .Case("got@tprel@pcrel", VK_PPC_GOT_TPREL_PCREL)
+      .Case("tls@pcrel", VK_PPC_TLS_PCREL)
+      .Case("notoc", VK_PPC_NOTOC)
+      .Case("gdgot", VK_Hexagon_GD_GOT)
+      .Case("gdplt", VK_Hexagon_GD_PLT)
+      .Case("iegot", VK_Hexagon_IE_GOT)
+      .Case("ie", VK_Hexagon_IE)
+      .Case("ldgot", VK_Hexagon_LD_GOT)
+      .Case("ldplt", VK_Hexagon_LD_PLT)
+      .Case("lo8", VK_AVR_LO8)
+      .Case("hi8", VK_AVR_HI8)
+      .Case("hlo8", VK_AVR_HLO8)
+      .Case("typeindex", VK_WASM_TYPEINDEX)
+      .Case("tbrel", VK_WASM_TBREL)
+      .Case("mbrel", VK_WASM_MBREL)
+      .Case("tlsrel", VK_WASM_TLSREL)
+      .Case("got@tls", VK_WASM_GOT_TLS)
+      .Case("funcindex", VK_WASM_FUNCINDEX)
+      .Case("gotpcrel32@lo", VK_AMDGPU_GOTPCREL32_LO)
+      .Case("gotpcrel32@hi", VK_AMDGPU_GOTPCREL32_HI)
+      .Case("rel32@lo", VK_AMDGPU_REL32_LO)
+      .Case("rel32@hi", VK_AMDGPU_REL32_HI)
+      .Case("rel64", VK_AMDGPU_REL64)
+      .Case("abs32@lo", VK_AMDGPU_ABS32_LO)
+      .Case("abs32@hi", VK_AMDGPU_ABS32_HI)
+      .Case("hi", VK_VE_HI32)
+      .Case("lo", VK_VE_LO32)
+      .Case("pc_hi", VK_VE_PC_HI32)
+      .Case("pc_lo", VK_VE_PC_LO32)
+      .Case("got_hi", VK_VE_GOT_HI32)
+      .Case("got_lo", VK_VE_GOT_LO32)
+      .Case("gotoff_hi", VK_VE_GOTOFF_HI32)
+      .Case("gotoff_lo", VK_VE_GOTOFF_LO32)
+      .Case("plt_hi", VK_VE_PLT_HI32)
+      .Case("plt_lo", VK_VE_PLT_LO32)
+      .Case("tls_gd_hi", VK_VE_TLS_GD_HI32)
+      .Case("tls_gd_lo", VK_VE_TLS_GD_LO32)
+      .Case("tpoff_hi", VK_VE_TPOFF_HI32)
+      .Case("tpoff_lo", VK_VE_TPOFF_LO32)
+      // IPU local patch begin
+      .Case("relative@16@s2", VK_COLOSSUS_RELATIVE_16_S2)
+      .Case("abs18@s2", VK_COLOSSUS_18_S2)
+      .Case("abs19@s2", VK_COLOSSUS_19_S2)
+      .Case("abs@21", VK_COLOSSUS_21)
+      // IPU local patch end
+      .Default(VK_Invalid);
 }
 
 /* *** */
@@ -557,13 +610,12 @@ bool MCExpr::evaluateAsAbsolute(int64_t &Res) const {
   return evaluateAsAbsolute(Res, nullptr, nullptr, nullptr, false);
 }
 
-bool MCExpr::evaluateAsAbsolute(int64_t &Res,
-                                const MCAsmLayout &Layout) const {
-  return evaluateAsAbsolute(Res, &Layout.getAssembler(), &Layout, nullptr, false);
+bool MCExpr::evaluateAsAbsolute(int64_t &Res, const MCAsmLayout &Layout) const {
+  return evaluateAsAbsolute(Res, &Layout.getAssembler(), &Layout, nullptr,
+                            false);
 }
 
-bool MCExpr::evaluateAsAbsolute(int64_t &Res,
-                                const MCAsmLayout &Layout,
+bool MCExpr::evaluateAsAbsolute(int64_t &Res, const MCAsmLayout &Layout,
                                 const SectionAddrMap &Addrs) const {
   // Setting InSet causes us to absolutize differences across sections and that
   // is what the MachO writer uses Addrs for.
@@ -646,7 +698,8 @@ static void AttemptToFoldSymbolOffsetDifference(
   // instructions and InSet is false (not expressions in directive like
   // .size/.fill), disable the fast path.
   if (Layout && (InSet || !SecA.hasInstructions() ||
-                 !Asm->getContext().getTargetTriple().isRISCV())) {
+                 !(Asm->getContext().getTargetTriple().isRISCV() ||
+                   Asm->getContext().getTargetTriple().isLoongArch()))) {
     // If both symbols are in the same fragment, return the difference of their
     // offsets. canGetFragmentOffset(FA) may be false.
     if (FA == FB && !SA.isVariable() && !SB.isVariable()) {
@@ -717,8 +770,14 @@ static void AttemptToFoldSymbolOffsetDifference(
       }
 
       int64_t Num;
+      unsigned Count;
       if (DF) {
         Displacement += DF->getContents().size();
+      } else if (auto *AF = dyn_cast<MCAlignFragment>(FI);
+                 AF && Layout && AF->hasEmitNops() &&
+                 !Asm->getBackend().shouldInsertExtraNopBytesForCodeAlign(
+                     *AF, Count)) {
+        Displacement += Asm->computeFragmentSize(*Layout, *AF);
       } else if (auto *FF = dyn_cast<MCFillFragment>(FI);
                  FF && FF->getNumValues().evaluateAsAbsolute(Num)) {
         Displacement += Num * FF->getValueSize();
@@ -813,8 +872,7 @@ static bool EvaluateSymbolicAdd(const MCAssembler *Asm,
   return true;
 }
 
-bool MCExpr::evaluateAsRelocatable(MCValue &Res,
-                                   const MCAsmLayout *Layout,
+bool MCExpr::evaluateAsRelocatable(MCValue &Res, const MCAsmLayout *Layout,
                                    const MCFixup *Fixup) const {
   MCAssembler *Assembler = Layout ? &Layout->getAssembler() : nullptr;
   return evaluateAsRelocatableImpl(Res, Assembler, Layout, Fixup, nullptr,
@@ -956,16 +1014,17 @@ bool MCExpr::evaluateAsRelocatableImpl(MCValue &Res, const MCAssembler *Asm,
                                                   Addrs, InSet)) {
       // Check if both are Target Expressions, see if we can compare them.
       if (const MCTargetExpr *L = dyn_cast<MCTargetExpr>(ABE->getLHS())) {
-        const MCTargetExpr *R = cast<MCTargetExpr>(ABE->getRHS());
-        switch (ABE->getOpcode()) {
-        case MCBinaryExpr::EQ:
-          Res = MCValue::get(L->isEqualTo(R) ? -1 : 0);
-          return true;
-        case MCBinaryExpr::NE:
-          Res = MCValue::get(L->isEqualTo(R) ? 0 : -1);
-          return true;
-        default:
-          break;
+        if (const MCTargetExpr *R = dyn_cast<MCTargetExpr>(ABE->getRHS())) {
+          switch (ABE->getOpcode()) {
+          case MCBinaryExpr::EQ:
+            Res = MCValue::get(L->isEqualTo(R) ? -1 : 0);
+            return true;
+          case MCBinaryExpr::NE:
+            Res = MCValue::get(L->isEqualTo(R) ? 0 : -1);
+            return true;
+          default:
+            break;
+          }
         }
       }
       return false;
@@ -1003,9 +1062,15 @@ bool MCExpr::evaluateAsRelocatableImpl(MCValue &Res, const MCAssembler *Asm,
     int64_t Result = 0;
     auto Op = ABE->getOpcode();
     switch (Op) {
-    case MCBinaryExpr::AShr: Result = LHS >> RHS; break;
-    case MCBinaryExpr::Add:  Result = LHS + RHS; break;
-    case MCBinaryExpr::And:  Result = LHS & RHS; break;
+    case MCBinaryExpr::AShr:
+      Result = LHS >> RHS;
+      break;
+    case MCBinaryExpr::Add:
+      Result = LHS + RHS;
+      break;
+    case MCBinaryExpr::And:
+      Result = LHS & RHS;
+      break;
     case MCBinaryExpr::Div:
     case MCBinaryExpr::Mod:
       // Handle division by zero. gas just emits a warning and keeps going,
@@ -1021,21 +1086,51 @@ bool MCExpr::evaluateAsRelocatableImpl(MCValue &Res, const MCAssembler *Asm,
       else
         Result = LHS % RHS;
       break;
-    case MCBinaryExpr::EQ:   Result = LHS == RHS; break;
-    case MCBinaryExpr::GT:   Result = LHS > RHS; break;
-    case MCBinaryExpr::GTE:  Result = LHS >= RHS; break;
-    case MCBinaryExpr::LAnd: Result = LHS && RHS; break;
-    case MCBinaryExpr::LOr:  Result = LHS || RHS; break;
-    case MCBinaryExpr::LShr: Result = uint64_t(LHS) >> uint64_t(RHS); break;
-    case MCBinaryExpr::LT:   Result = LHS < RHS; break;
-    case MCBinaryExpr::LTE:  Result = LHS <= RHS; break;
-    case MCBinaryExpr::Mul:  Result = LHS * RHS; break;
-    case MCBinaryExpr::NE:   Result = LHS != RHS; break;
-    case MCBinaryExpr::Or:   Result = LHS | RHS; break;
-    case MCBinaryExpr::OrNot: Result = LHS | ~RHS; break;
-    case MCBinaryExpr::Shl:  Result = uint64_t(LHS) << uint64_t(RHS); break;
-    case MCBinaryExpr::Sub:  Result = LHS - RHS; break;
-    case MCBinaryExpr::Xor:  Result = LHS ^ RHS; break;
+    case MCBinaryExpr::EQ:
+      Result = LHS == RHS;
+      break;
+    case MCBinaryExpr::GT:
+      Result = LHS > RHS;
+      break;
+    case MCBinaryExpr::GTE:
+      Result = LHS >= RHS;
+      break;
+    case MCBinaryExpr::LAnd:
+      Result = LHS && RHS;
+      break;
+    case MCBinaryExpr::LOr:
+      Result = LHS || RHS;
+      break;
+    case MCBinaryExpr::LShr:
+      Result = uint64_t(LHS) >> uint64_t(RHS);
+      break;
+    case MCBinaryExpr::LT:
+      Result = LHS < RHS;
+      break;
+    case MCBinaryExpr::LTE:
+      Result = LHS <= RHS;
+      break;
+    case MCBinaryExpr::Mul:
+      Result = LHS * RHS;
+      break;
+    case MCBinaryExpr::NE:
+      Result = LHS != RHS;
+      break;
+    case MCBinaryExpr::Or:
+      Result = LHS | RHS;
+      break;
+    case MCBinaryExpr::OrNot:
+      Result = LHS | ~RHS;
+      break;
+    case MCBinaryExpr::Shl:
+      Result = uint64_t(LHS) << uint64_t(RHS);
+      break;
+    case MCBinaryExpr::Sub:
+      Result = LHS - RHS;
+      break;
+    case MCBinaryExpr::Xor:
+      Result = LHS ^ RHS;
+      break;
     }
 
     switch (Op) {

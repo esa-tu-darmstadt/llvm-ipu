@@ -45,7 +45,7 @@ def find_sanitizer_runtime(name):
 
 
 def find_shlibpath_var():
-    if platform.system() in ["Linux", "FreeBSD", "NetBSD", "SunOS"]:
+    if platform.system() in ["Linux", "FreeBSD", "NetBSD", "OpenBSD", "SunOS"]:
         yield "LD_LIBRARY_PATH"
     elif platform.system() == "Darwin":
         yield "DYLD_LIBRARY_PATH"
@@ -121,6 +121,7 @@ if is_configured("llvm_use_sanitizer"):
             config.environment["DYLD_INSERT_LIBRARIES"] = find_sanitizer_runtime(
                 "libclang_rt.asan_osx_dynamic.dylib"
             )
+            config.environment["MallocNanoZone"] = "0"
 
     if "Thread" in config.llvm_use_sanitizer:
         config.environment["TSAN_OPTIONS"] = "halt_on_error=1"
@@ -248,7 +249,7 @@ if (
     "lldb-repro-capture" in config.available_features
     or "lldb-repro-replay" in config.available_features
 ):
-    dotest_cmd += ["--skip-category=lldb-vscode", "--skip-category=std-module"]
+    dotest_cmd += ["--skip-category=lldb-dap", "--skip-category=std-module"]
 
 if "lldb-simulator-ios" in config.available_features:
     dotest_cmd += ["--apple-sdk", "iphonesimulator", "--platform-name", "ios-simulator"]
@@ -309,3 +310,6 @@ if "FREEBSD_LEGACY_PLUGIN" in os.environ:
 # Propagate XDG_CACHE_HOME
 if "XDG_CACHE_HOME" in os.environ:
     config.environment["XDG_CACHE_HOME"] = os.environ["XDG_CACHE_HOME"]
+
+if is_configured("use_vendor_packages"):
+    config.environment["LLDB_TEST_USE_VENDOR_PACKAGES"] = "1"

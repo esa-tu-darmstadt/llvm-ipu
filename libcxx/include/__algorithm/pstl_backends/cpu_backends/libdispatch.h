@@ -23,11 +23,14 @@
 #include <__memory/construct_at.h>
 #include <__memory/unique_ptr.h>
 #include <__numeric/reduce.h>
+#include <__pstl/cpu_algos/cpu_traits.h>
+#include <__utility/empty.h>
+#include <__utility/exception_guard.h>
 #include <__utility/move.h>
 #include <__utility/pair.h>
-#include <__utility/terminate_on_exception.h>
 #include <cstddef>
 #include <new>
+#include <optional>
 
 _LIBCPP_PUSH_MACROS
 #include <__undef_macros>
@@ -35,10 +38,11 @@ _LIBCPP_PUSH_MACROS
 #if !defined(_LIBCPP_HAS_NO_INCOMPLETE_PSTL) && _LIBCPP_STD_VER >= 17
 
 _LIBCPP_BEGIN_NAMESPACE_STD
+namespace __pstl {
 
-namespace __par_backend {
-inline namespace __libdispatch {
+struct __libdispatch_backend_tag {};
 
+namespace __libdispatch {
 // ::dispatch_apply is marked as __attribute__((nothrow)) because it doesn't let exceptions propagate, and neither do
 // we.
 // TODO: Do we want to add [[_Clang::__callback__(__func, __context, __)]]?
@@ -61,8 +65,9 @@ struct __chunk_partitions {
 [[__gnu__::__const__]] _LIBCPP_EXPORTED_FROM_ABI __chunk_partitions __partition_chunks(ptrdiff_t __size) noexcept;
 
 template <class _RandomAccessIterator, class _Functor>
-_LIBCPP_HIDE_FROM_ABI void
+_LIBCPP_HIDE_FROM_ABI optional<__empty>
 __dispatch_parallel_for(__chunk_partitions __partitions, _RandomAccessIterator __first, _Functor __func) {
+  // Perform the chunked execution.
   __libdispatch::__dispatch_apply(__partitions.__chunk_count_, [&](size_t __chunk) {
     auto __this_chunk_size = __chunk == 0 ? __partitions.__first_chunk_size_ : __partitions.__chunk_size_;
     auto __index =
@@ -71,62 +76,81 @@ __dispatch_parallel_for(__chunk_partitions __partitions, _RandomAccessIterator _
             : (__chunk * __partitions.__chunk_size_) + (__partitions.__first_chunk_size_ - __partitions.__chunk_size_);
     __func(__first + __index, __first + __index + __this_chunk_size);
   });
+
+  return __empty{};
 }
+} // namespace __libdispatch
 
-template <class _RandomAccessIterator, class _Functor>
-_LIBCPP_HIDE_FROM_ABI void
-__parallel_for(_RandomAccessIterator __first, _RandomAccessIterator __last, _Functor __func) {
-  return __libdispatch::__dispatch_parallel_for(
-      __libdispatch::__partition_chunks(__last - __first), std::move(__first), std::move(__func));
-}
-
-template <class _RandomAccessIterator1, class _RandomAccessIterator2, class _RandomAccessIteratorOut>
-struct __merge_range {
-  __merge_range(_RandomAccessIterator1 __mid1, _RandomAccessIterator2 __mid2, _RandomAccessIteratorOut __result)
-      : __mid1_(__mid1), __mid2_(__mid2), __result_(__result) {}
-
-  _RandomAccessIterator1 __mid1_;
-  _RandomAccessIterator2 __mid2_;
-  _RandomAccessIteratorOut __result_;
-};
-
-template <typename _RandomAccessIterator1,
-          typename _RandomAccessIterator2,
-          typename _RandomAccessIterator3,
-          typename _Compare,
-          typename _LeafMerge>
-_LIBCPP_HIDE_FROM_ABI void __parallel_merge(
-    _RandomAccessIterator1 __first1,
-    _RandomAccessIterator1 __last1,
-    _RandomAccessIterator2 __first2,
-    _RandomAccessIterator2 __last2,
-    _RandomAccessIterator3 __result,
-    _Compare __comp,
-    _LeafMerge __leaf_merge) {
-  __chunk_partitions __partitions =
-      __libdispatch::__partition_chunks(std::max<ptrdiff_t>(__last1 - __first1, __last2 - __first2));
-
-  if (__partitions.__chunk_count_ == 0)
-    return;
-
-  if (__partitions.__chunk_count_ == 1) {
-    __leaf_merge(__first1, __last1, __first2, __last2, __result, __comp);
-    return;
+template <>
+struct __cpu_traits<__libdispatch_backend_tag> {
+  template <class _RandomAccessIterator, class _Functor>
+  _LIBCPP_HIDE_FROM_ABI static optional<__empty>
+  __for_each(_RandomAccessIterator __first, _RandomAccessIterator __last, _Functor __func) {
+    return __libdispatch::__dispatch_parallel_for(
+        __libdispatch::__partition_chunks(__last - __first), std::move(__first), std::move(__func));
   }
 
-  using __merge_range_t = __merge_range<_RandomAccessIterator1, _RandomAccessIterator2, _RandomAccessIterator3>;
-  auto const __n_ranges = __partitions.__chunk_count_ + 1;
+  template <class _RandomAccessIterator1, class _RandomAccessIterator2, class _RandomAccessIteratorOut>
+  struct __merge_range {
+    __merge_range(_RandomAccessIterator1 __mid1, _RandomAccessIterator2 __mid2, _RandomAccessIteratorOut __result)
+        : __mid1_(__mid1), __mid2_(__mid2), __result_(__result) {}
 
-  // TODO: use __uninitialized_buffer
-  auto __destroy = [=](__merge_range_t* __ptr) {
-    std::destroy_n(__ptr, __n_ranges);
-    std::allocator<__merge_range_t>().deallocate(__ptr, __n_ranges);
+    _RandomAccessIterator1 __mid1_;
+    _RandomAccessIterator2 __mid2_;
+    _RandomAccessIteratorOut __result_;
   };
-  unique_ptr<__merge_range_t[], decltype(__destroy)> __ranges(
-      std::allocator<__merge_range_t>().allocate(__n_ranges), __destroy);
 
-  // TODO: Improve the case where the smaller range is merged into just a few (or even one) chunks of the larger case
-  std::__terminate_on_exception([&] {
+  template <typename _RandomAccessIterator1,
+            typename _RandomAccessIterator2,
+            typename _RandomAccessIterator3,
+            typename _Compare,
+            typename _LeafMerge>
+  _LIBCPP_HIDE_FROM_ABI static optional<__empty>
+  __merge(_RandomAccessIterator1 __first1,
+          _RandomAccessIterator1 __last1,
+          _RandomAccessIterator2 __first2,
+          _RandomAccessIterator2 __last2,
+          _RandomAccessIterator3 __result,
+          _Compare __comp,
+          _LeafMerge __leaf_merge) noexcept {
+    __libdispatch::__chunk_partitions __partitions =
+        __libdispatch::__partition_chunks(std::max<ptrdiff_t>(__last1 - __first1, __last2 - __first2));
+
+    if (__partitions.__chunk_count_ == 0)
+      return __empty{};
+
+    if (__partitions.__chunk_count_ == 1) {
+      __leaf_merge(__first1, __last1, __first2, __last2, __result, __comp);
+      return __empty{};
+    }
+
+    using __merge_range_t = __merge_range<_RandomAccessIterator1, _RandomAccessIterator2, _RandomAccessIterator3>;
+    auto const __n_ranges = __partitions.__chunk_count_ + 1;
+
+    // TODO: use __uninitialized_buffer
+    auto __destroy = [=](__merge_range_t* __ptr) {
+      std::destroy_n(__ptr, __n_ranges);
+      std::allocator<__merge_range_t>().deallocate(__ptr, __n_ranges);
+    };
+
+    unique_ptr<__merge_range_t[], decltype(__destroy)> __ranges(
+        [&]() -> __merge_range_t* {
+#  ifndef _LIBCPP_HAS_NO_EXCEPTIONS
+          try {
+#  endif
+            return std::allocator<__merge_range_t>().allocate(__n_ranges);
+#  ifndef _LIBCPP_HAS_NO_EXCEPTIONS
+          } catch (const std::bad_alloc&) {
+            return nullptr;
+          }
+#  endif
+        }(),
+        __destroy);
+
+    if (!__ranges)
+      return nullopt;
+
+    // TODO: Improve the case where the smaller range is merged into just a few (or even one) chunks of the larger case
     __merge_range_t* __r = __ranges.get();
     std::__construct_at(__r++, __first1, __first2, __result);
 
@@ -172,82 +196,81 @@ _LIBCPP_HIDE_FROM_ABI void __parallel_merge(
           __first_iters.__result_,
           __comp);
     });
-  });
-}
 
-template <class _RandomAccessIterator, class _Transform, class _Value, class _Combiner, class _Reduction>
-_LIBCPP_HIDE_FROM_ABI _Value __parallel_transform_reduce(
-    _RandomAccessIterator __first,
-    _RandomAccessIterator __last,
-    _Transform __transform,
-    _Value __init,
-    _Combiner __combiner,
-    _Reduction __reduction) {
-  if (__first == __last)
-    return __init;
+    return __empty{};
+  }
 
-  auto __partitions = __libdispatch::__partition_chunks(__last - __first);
+  template <class _RandomAccessIterator, class _Transform, class _Value, class _Combiner, class _Reduction>
+  _LIBCPP_HIDE_FROM_ABI static optional<_Value> __transform_reduce(
+      _RandomAccessIterator __first,
+      _RandomAccessIterator __last,
+      _Transform __transform,
+      _Value __init,
+      _Combiner __combiner,
+      _Reduction __reduction) {
+    if (__first == __last)
+      return __init;
 
-  auto __destroy = [__count = __partitions.__chunk_count_](_Value* __ptr) {
-    std::destroy_n(__ptr, __count);
-    std::allocator<_Value>().deallocate(__ptr, __count);
-  };
+    auto __partitions = __libdispatch::__partition_chunks(__last - __first);
 
-  // TODO: use __uninitialized_buffer
-  // TODO: allocate one element per worker instead of one element per chunk
-  unique_ptr<_Value[], decltype(__destroy)> __values(
-      std::allocator<_Value>().allocate(__partitions.__chunk_count_), __destroy);
+    auto __destroy = [__count = __partitions.__chunk_count_](_Value* __ptr) {
+      std::destroy_n(__ptr, __count);
+      std::allocator<_Value>().deallocate(__ptr, __count);
+    };
 
-  // __dispatch_apply is noexcept
-  __libdispatch::__dispatch_apply(__partitions.__chunk_count_, [&](size_t __chunk) {
-    auto __this_chunk_size = __chunk == 0 ? __partitions.__first_chunk_size_ : __partitions.__chunk_size_;
-    auto __index =
-        __chunk == 0
-            ? 0
-            : (__chunk * __partitions.__chunk_size_) + (__partitions.__first_chunk_size_ - __partitions.__chunk_size_);
-    if (__this_chunk_size != 1) {
-      std::__construct_at(
-          __values.get() + __chunk,
-          __reduction(__first + __index + 2,
-                      __first + __index + __this_chunk_size,
-                      __combiner(__transform(__first + __index), __transform(__first + __index + 1))));
-    } else {
-      std::__construct_at(__values.get() + __chunk, __transform(__first + __index));
-    }
-  });
+    // TODO: use __uninitialized_buffer
+    // TODO: allocate one element per worker instead of one element per chunk
+    unique_ptr<_Value[], decltype(__destroy)> __values(
+        std::allocator<_Value>().allocate(__partitions.__chunk_count_), __destroy);
 
-  return std::__terminate_on_exception([&] {
+    // __dispatch_apply is noexcept
+    __libdispatch::__dispatch_apply(__partitions.__chunk_count_, [&](size_t __chunk) {
+      auto __this_chunk_size = __chunk == 0 ? __partitions.__first_chunk_size_ : __partitions.__chunk_size_;
+      auto __index           = __chunk == 0 ? 0
+                                            : (__chunk * __partitions.__chunk_size_) +
+                                        (__partitions.__first_chunk_size_ - __partitions.__chunk_size_);
+      if (__this_chunk_size != 1) {
+        std::__construct_at(
+            __values.get() + __chunk,
+            __reduction(__first + __index + 2,
+                        __first + __index + __this_chunk_size,
+                        __combiner(__transform(__first + __index), __transform(__first + __index + 1))));
+      } else {
+        std::__construct_at(__values.get() + __chunk, __transform(__first + __index));
+      }
+    });
+
     return std::reduce(
         std::make_move_iterator(__values.get()),
         std::make_move_iterator(__values.get() + __partitions.__chunk_count_),
         std::move(__init),
         __combiner);
-  });
-}
+  }
 
-template <class _RandomAccessIterator, class _Comp, class _LeafSort>
-_LIBCPP_HIDE_FROM_ABI void __parallel_stable_sort(
-    _RandomAccessIterator __first, _RandomAccessIterator __last, _Comp __comp, _LeafSort __leaf_sort) {
-  const auto __size = __last - __first;
-  auto __partitions = __libdispatch::__partition_chunks(__size);
+  template <class _RandomAccessIterator, class _Comp, class _LeafSort>
+  _LIBCPP_HIDE_FROM_ABI static optional<__empty>
+  __stable_sort(_RandomAccessIterator __first, _RandomAccessIterator __last, _Comp __comp, _LeafSort __leaf_sort) {
+    const auto __size = __last - __first;
+    auto __partitions = __libdispatch::__partition_chunks(__size);
 
-  if (__partitions.__chunk_count_ == 0)
-    return;
+    if (__partitions.__chunk_count_ == 0)
+      return __empty{};
 
-  if (__partitions.__chunk_count_ == 1)
-    return __leaf_sort(__first, __last, __comp);
+    if (__partitions.__chunk_count_ == 1) {
+      __leaf_sort(__first, __last, __comp);
+      return __empty{};
+    }
 
-  using _Value = __iter_value_type<_RandomAccessIterator>;
+    using _Value = __iter_value_type<_RandomAccessIterator>;
 
-  auto __destroy = [__size](_Value* __ptr) {
-    std::destroy_n(__ptr, __size);
-    std::allocator<_Value>().deallocate(__ptr, __size);
-  };
+    auto __destroy = [__size](_Value* __ptr) {
+      std::destroy_n(__ptr, __size);
+      std::allocator<_Value>().deallocate(__ptr, __size);
+    };
 
-  // TODO: use __uninitialized_buffer
-  unique_ptr<_Value[], decltype(__destroy)> __values(std::allocator<_Value>().allocate(__size), __destroy);
+    // TODO: use __uninitialized_buffer
+    unique_ptr<_Value[], decltype(__destroy)> __values(std::allocator<_Value>().allocate(__size), __destroy);
 
-  return std::__terminate_on_exception([&] {
     // Initialize all elements to a moved-from state
     // TODO: Don't do this - this can be done in the first merge - see https://llvm.org/PR63928
     std::__construct_at(__values.get(), std::move(*__first));
@@ -310,14 +333,16 @@ _LIBCPP_HIDE_FROM_ABI void __parallel_stable_sort(
     if (__objects_are_in_buffer) {
       std::move(__values.get(), __values.get() + __size, __first);
     }
-  });
-}
 
-_LIBCPP_HIDE_FROM_ABI inline void __cancel_execution() {}
+    return __empty{};
+  }
 
-} // namespace __libdispatch
-} // namespace __par_backend
+  _LIBCPP_HIDE_FROM_ABI static void __cancel_execution() {}
 
+  static constexpr size_t __lane_size = 64;
+};
+
+} // namespace __pstl
 _LIBCPP_END_NAMESPACE_STD
 
 #endif // !defined(_LIBCPP_HAS_NO_INCOMPLETE_PSTL) && _LIBCPP_STD_VER >= 17

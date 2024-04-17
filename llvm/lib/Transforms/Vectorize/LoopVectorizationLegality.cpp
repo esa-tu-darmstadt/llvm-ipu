@@ -291,7 +291,7 @@ void LoopVectorizeHints::getHintsFromMetadata() {
 }
 
 void LoopVectorizeHints::setHint(StringRef Name, Metadata *Arg) {
-  if (!Name.startswith(Prefix()))
+  if (!Name.starts_with(Prefix()))
     return;
   Name = Name.substr(Prefix().size(), StringRef::npos);
 
@@ -953,6 +953,11 @@ bool LoopVectorizationLegality::canVectorizeInstrs() {
           }
       }
 
+      // If we found a vectorized variant of a function, note that so LV can
+      // make better decisions about maximum VF.
+      if (CI && !VFDatabase::getMappings(*CI).empty())
+        VecCallVariantsFound = true;
+
       // Check that the instruction return type is vectorizable.
       // Also, we can't vectorize extractelement instructions.
       if ((!VectorType::isValidElementType(I.getType()) &&
@@ -1554,6 +1559,19 @@ bool LoopVectorizationLegality::prepareToFoldTailByMasking() {
           << "LV: Cannot fold tail by masking, loop has an outside user for "
           << *UI << "\n");
       return false;
+    }
+  }
+
+  for (const auto &Entry : getInductionVars()) {
+    PHINode *OrigPhi = Entry.first;
+    for (User *U : OrigPhi->users()) {
+      auto *UI = cast<Instruction>(U);
+      if (!TheLoop->contains(UI)) {
+        LLVM_DEBUG(dbgs() << "LV: Cannot fold tail by masking, loop IV has an "
+                             "outside user for "
+                          << *UI << "\n");
+        return false;
+      }
     }
   }
 

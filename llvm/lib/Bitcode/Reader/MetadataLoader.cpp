@@ -22,7 +22,6 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/ilist_iterator.h"
-#include "llvm/ADT/iterator_range.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/LLVMBitCodes.h"
@@ -548,8 +547,6 @@ class MetadataLoader::MetadataLoaderImpl {
 
   /// Move local imports from DICompileUnit's 'imports' field to
   /// DISubprogram's retainedNodes.
-  /// Move fucntion-local enums from DICompileUnit's enums
-  /// to DISubprogram's retainedNodes.
   void upgradeCULocals() {
     if (NamedMDNode *CUNodes = TheModule.getNamedMetadata("llvm.dbg.cu")) {
       for (unsigned I = 0, E = CUNodes->getNumOperands(); I != E; ++I) {
@@ -557,66 +554,48 @@ class MetadataLoader::MetadataLoaderImpl {
         if (!CU)
           continue;
 
-        SetVector<Metadata *> MetadataToRemove;
-        // Collect imported entities to be moved.
-        if (CU->getRawImportedEntities())
+        if (CU->getRawImportedEntities()) {
+          // Collect a set of imported entities to be moved.
+          SetVector<Metadata *> EntitiesToRemove;
           for (Metadata *Op : CU->getImportedEntities()->operands()) {
             auto *IE = cast<DIImportedEntity>(Op);
-            if (dyn_cast_or_null<DILocalScope>(IE->getScope()))
-              MetadataToRemove.insert(IE);
-          }
-        // Collect enums to be moved.
-        if (CU->getRawEnumTypes())
-          for (Metadata *Op : CU->getEnumTypes()->operands()) {
-            auto *Enum = cast<DICompositeType>(Op);
-            if (dyn_cast_or_null<DILocalScope>(Enum->getScope()))
-              MetadataToRemove.insert(Enum);
+            if (dyn_cast_or_null<DILocalScope>(IE->getScope())) {
+              EntitiesToRemove.insert(IE);
+            }
           }
 
-        if (!MetadataToRemove.empty()) {
-          // Make a new list of CU's 'imports'.
-          SmallVector<Metadata *> NewImports;
-          if (CU->getRawImportedEntities())
-            for (Metadata *Op : CU->getImportedEntities()->operands())
-              if (!MetadataToRemove.contains(Op))
+          if (!EntitiesToRemove.empty()) {
+            // Make a new list of CU's 'imports'.
+            SmallVector<Metadata *> NewImports;
+            for (Metadata *Op : CU->getImportedEntities()->operands()) {
+              if (!EntitiesToRemove.contains(cast<DIImportedEntity>(Op))) {
                 NewImports.push_back(Op);
+              }
+            }
 
-          // Make a new list of CU's 'enums'.
-          SmallVector<Metadata *> NewEnums;
-          if (CU->getRawEnumTypes())
-            for (Metadata *Op : CU->getEnumTypes()->operands())
-              if (!MetadataToRemove.contains(Op))
-                NewEnums.push_back(Op);
+            // Find DISubprogram corresponding to each entity.
+            std::map<DISubprogram *, SmallVector<Metadata *>> SPToEntities;
+            for (auto *I : EntitiesToRemove) {
+              auto *Entity = cast<DIImportedEntity>(I);
+              if (auto *SP = findEnclosingSubprogram(
+                      cast<DILocalScope>(Entity->getScope()))) {
+                SPToEntities[SP].push_back(Entity);
+              }
+            }
 
-          // Find DISubprogram corresponding to each entity.
-          std::map<DISubprogram *, SmallVector<Metadata *>> SPToEntities;
-          for (auto *I : MetadataToRemove) {
-            DILocalScope *Scope = nullptr;
-            if (auto *Entity = dyn_cast<DIImportedEntity>(I))
-              Scope = cast<DILocalScope>(Entity->getScope());
-            else if (auto *Enum = dyn_cast<DICompositeType>(I))
-              Scope = cast<DILocalScope>(Enum->getScope());
+            // Update DISubprograms' retainedNodes.
+            for (auto I = SPToEntities.begin(); I != SPToEntities.end(); ++I) {
+              auto *SP = I->first;
+              auto RetainedNodes = SP->getRetainedNodes();
+              SmallVector<Metadata *> MDs(RetainedNodes.begin(),
+                                          RetainedNodes.end());
+              MDs.append(I->second);
+              SP->replaceRetainedNodes(MDNode::get(Context, MDs));
+            }
 
-            if (auto *SP = findEnclosingSubprogram(Scope))
-              SPToEntities[SP].push_back(I);
-          }
-
-          // Update DISubprograms' retainedNodes.
-          for (auto I = SPToEntities.begin(); I != SPToEntities.end(); ++I) {
-            auto *SP = I->first;
-            auto RetainedNodes = SP->getRetainedNodes();
-            SmallVector<Metadata *> MDs(RetainedNodes.begin(),
-                                        RetainedNodes.end());
-            MDs.append(I->second);
-            SP->replaceRetainedNodes(MDNode::get(Context, MDs));
-          }
-
-          // Remove entities with local scope from CU.
-          if (CU->getRawImportedEntities())
+            // Remove entities with local scope from CU.
             CU->replaceImportedEntities(MDTuple::get(Context, NewImports));
-          // Remove enums with local scope from CU.
-          if (CU->getRawEnumTypes())
-            CU->replaceEnumTypes(MDTuple::get(Context, NewEnums));
+          }
         }
       }
     }
@@ -630,17 +609,25 @@ class MetadataLoader::MetadataLoaderImpl {
     if (!NeedDeclareExpressionUpgrade)
       return;
 
+    auto UpdateDeclareIfNeeded = [&](auto *Declare) {
+      auto *DIExpr = Declare->getExpression();
+      if (!DIExpr || !DIExpr->startsWithDeref() ||
+          !isa_and_nonnull<Argument>(Declare->getAddress()))
+        return;
+      SmallVector<uint64_t, 8> Ops;
+      Ops.append(std::next(DIExpr->elements_begin()), DIExpr->elements_end());
+      Declare->setExpression(DIExpression::get(Context, Ops));
+    };
+
     for (auto &BB : F)
-      for (auto &I : BB)
+      for (auto &I : BB) {
+        for (DbgVariableRecord &DVR : filterDbgVars(I.getDbgRecordRange())) {
+          if (DVR.isDbgDeclare())
+            UpdateDeclareIfNeeded(&DVR);
+        }
         if (auto *DDI = dyn_cast<DbgDeclareInst>(&I))
-          if (auto *DIExpr = DDI->getExpression())
-            if (DIExpr->startsWithDeref() &&
-                isa_and_nonnull<Argument>(DDI->getAddress())) {
-              SmallVector<uint64_t, 8> Ops;
-              Ops.append(std::next(DIExpr->elements_begin()),
-                         DIExpr->elements_end());
-              DDI->setExpression(DIExpression::get(Context, Ops));
-            }
+          UpdateDeclareIfNeeded(DDI);
+      }
   }
 
   /// Upgrade the expression from previous versions.
@@ -725,10 +712,11 @@ class MetadataLoader::MetadataLoaderImpl {
     return Error::success();
   }
 
-  void upgradeDebugInfo() {
+  void upgradeDebugInfo(bool ModuleLevel) {
     upgradeCUSubprograms();
     upgradeCUVariables();
-    upgradeCULocals();
+    if (ModuleLevel)
+      upgradeCULocals();
   }
 
   void callMDTypeCallback(Metadata **Val, unsigned TypeID);
@@ -1105,7 +1093,7 @@ Error MetadataLoader::MetadataLoaderImpl::parseMetadata(bool ModuleLevel) {
       // Reading the named metadata created forward references and/or
       // placeholders, that we flush here.
       resolveForwardRefsAndPlaceholders(Placeholders);
-      upgradeDebugInfo();
+      upgradeDebugInfo(ModuleLevel);
       // Return at the beginning of the block, since it is easy to skip it
       // entirely from there.
       Stream.ReadBlockEnd(); // Pop the abbrev block context.
@@ -1136,7 +1124,7 @@ Error MetadataLoader::MetadataLoaderImpl::parseMetadata(bool ModuleLevel) {
       return error("Malformed block");
     case BitstreamEntry::EndBlock:
       resolveForwardRefsAndPlaceholders(Placeholders);
-      upgradeDebugInfo();
+      upgradeDebugInfo(ModuleLevel);
       return Error::success();
     case BitstreamEntry::Record:
       // The interesting case.
@@ -1231,6 +1219,26 @@ void MetadataLoader::MetadataLoaderImpl::resolveForwardRefsAndPlaceholders(
   // Finally, everything is in place, we can replace the placeholders operands
   // with the final node they refer to.
   Placeholders.flush(MetadataList);
+}
+
+static Value *getValueFwdRef(BitcodeReaderValueList &ValueList, unsigned Idx,
+                             Type *Ty, unsigned TyID) {
+  Value *V = ValueList.getValueFwdRef(Idx, Ty, TyID,
+                                      /*ConstExprInsertBB*/ nullptr);
+  if (V)
+    return V;
+
+  // This is a reference to a no longer supported constant expression.
+  // Pretend that the constant was deleted, which will replace metadata
+  // references with undef.
+  // TODO: This is a rather indirect check. It would be more elegant to use
+  // a separate ErrorInfo for constant materialization failure and thread
+  // the error reporting through getValueFwdRef().
+  if (Idx < ValueList.size() && ValueList[Idx] &&
+      ValueList[Idx]->getType() == Ty)
+    return UndefValue::get(Ty);
+
+  return nullptr;
 }
 
 Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
@@ -1364,8 +1372,7 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
       if (Ty->isMetadataTy())
         Elts.push_back(getMD(Record[i + 1]));
       else if (!Ty->isVoidTy()) {
-        Value *V = ValueList.getValueFwdRef(Record[i + 1], Ty, TyID,
-                                            /*ConstExprInsertBB*/ nullptr);
+        Value *V = getValueFwdRef(ValueList, Record[i + 1], Ty, TyID);
         if (!V)
           return error("Invalid value reference from old metadata");
         Metadata *MD = ValueAsMetadata::get(V);
@@ -1389,8 +1396,7 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
     if (!Ty || Ty->isMetadataTy() || Ty->isVoidTy())
       return error("Invalid record");
 
-    Value *V = ValueList.getValueFwdRef(Record[1], Ty, TyID,
-                                        /*ConstExprInsertBB*/ nullptr);
+    Value *V = getValueFwdRef(ValueList, Record[1], Ty, TyID);
     if (!V)
       return error("Invalid value reference from metadata");
 
@@ -1558,7 +1564,7 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
     break;
   }
   case bitc::METADATA_DERIVED_TYPE: {
-    if (Record.size() < 12 || Record.size() > 14)
+    if (Record.size() < 12 || Record.size() > 15)
       return error("Invalid record");
 
     // DWARF address space is encoded as N->getDWARFAddressSpace() + 1. 0 means
@@ -1568,8 +1574,17 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
       DWARFAddressSpace = Record[12] - 1;
 
     Metadata *Annotations = nullptr;
-    if (Record.size() > 13 && Record[13])
-      Annotations = getMDOrNull(Record[13]);
+    std::optional<DIDerivedType::PtrAuthData> PtrAuthData;
+
+    // Only look for annotations/ptrauth if both are allocated.
+    // If not, we can't tell which was intended to be embedded, as both ptrauth
+    // and annotations have been expected at Record[13] at various times.
+    if (Record.size() > 14) {
+      if (Record[13])
+        Annotations = getMDOrNull(Record[13]);
+      if (Record[14])
+        PtrAuthData.emplace(Record[14]);
+    }
 
     IsDistinct = Record[0];
     DINode::DIFlags Flags = static_cast<DINode::DIFlags>(Record[10]);
@@ -1579,7 +1594,7 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
                          getMDOrNull(Record[3]), Record[4],
                          getDITypeRefOrNull(Record[5]),
                          getDITypeRefOrNull(Record[6]), Record[7], Record[8],
-                         Record[9], DWARFAddressSpace, Flags,
+                         Record[9], DWARFAddressSpace, PtrAuthData, Flags,
                          getDITypeRefOrNull(Record[11]), Annotations)),
         NextMetadataNo);
     NextMetadataNo++;
@@ -1617,27 +1632,32 @@ Error MetadataLoader::MetadataLoaderImpl::parseOneMetadata(
     Metadata *Annotations = nullptr;
     auto *Identifier = getMDString(Record[15]);
     // If this module is being parsed so that it can be ThinLTO imported
-    // into another module, composite types only need to be imported
-    // as type declarations (unless full type definitions requested).
-    // Create type declarations up front to save memory. Also, buildODRType
-    // handles the case where this is type ODRed with a definition needed
-    // by the importing module, in which case the existing definition is
-    // used.
-    if (IsImporting && !ImportFullTypeDefinitions && Identifier &&
+    // into another module, composite types only need to be imported as
+    // type declarations (unless full type definitions are requested).
+    // Create type declarations up front to save memory. This is only
+    // done for types which have an Identifier, and are therefore
+    // subject to the ODR.
+    //
+    // buildODRType handles the case where this is type ODRed with a
+    // definition needed by the importing module, in which case the
+    // existing definition is used.
+    //
+    // We always import full definitions for anonymous composite types,
+    // as without a name, debuggers cannot easily resolve a declaration
+    // to its definition.
+    if (IsImporting && !ImportFullTypeDefinitions && Identifier && Name &&
         (Tag == dwarf::DW_TAG_enumeration_type ||
          Tag == dwarf::DW_TAG_class_type ||
          Tag == dwarf::DW_TAG_structure_type ||
          Tag == dwarf::DW_TAG_union_type)) {
       Flags = Flags | DINode::FlagFwdDecl;
-      if (Name) {
-        // This is a hack around preserving template parameters for simplified
-        // template names - it should probably be replaced with a
-        // DICompositeType flag specifying whether template parameters are
-        // required on declarations of this type.
-        StringRef NameStr = Name->getString();
-        if (!NameStr.contains('<') || NameStr.startswith("_STN|"))
-          TemplateParams = getMDOrNull(Record[14]);
-      }
+      // This is a hack around preserving template parameters for simplified
+      // template names - it should probably be replaced with a
+      // DICompositeType flag specifying whether template parameters are
+      // required on declarations of this type.
+      StringRef NameStr = Name->getString();
+      if (!NameStr.contains('<') || NameStr.starts_with("_STN|"))
+        TemplateParams = getMDOrNull(Record[14]);
     } else {
       BaseType = getDITypeRefOrNull(Record[6]);
       OffsetInBits = Record[9];

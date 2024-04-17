@@ -26,6 +26,7 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constant.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalValue.h"
@@ -49,6 +50,7 @@
 #include "llvm/IR/IntrinsicsR600.h"
 #include "llvm/IR/IntrinsicsRISCV.h"
 #include "llvm/IR/IntrinsicsS390.h"
+#include "llvm/IR/IntrinsicsSPIRV.h"
 #include "llvm/IR/IntrinsicsVE.h"
 #include "llvm/IR/IntrinsicsWebAssembly.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -85,6 +87,33 @@ template class llvm::SymbolTableListTraits<BasicBlock>;
 static cl::opt<unsigned> NonGlobalValueMaxNameSize(
     "non-global-value-max-name-size", cl::Hidden, cl::init(1024),
     cl::desc("Maximum size for the name of non-global values."));
+
+void Function::convertToNewDbgValues() {
+  IsNewDbgInfoFormat = true;
+  for (auto &BB : *this) {
+    BB.convertToNewDbgValues();
+  }
+}
+
+void Function::convertFromNewDbgValues() {
+  IsNewDbgInfoFormat = false;
+  for (auto &BB : *this) {
+    BB.convertFromNewDbgValues();
+  }
+}
+
+void Function::setIsNewDbgInfoFormat(bool NewFlag) {
+  if (NewFlag && !IsNewDbgInfoFormat)
+    convertToNewDbgValues();
+  else if (!NewFlag && IsNewDbgInfoFormat)
+    convertFromNewDbgValues();
+}
+void Function::setNewDbgInfoFormatFlag(bool NewFlag) {
+  for (auto &BB : *this) {
+    BB.setNewDbgInfoFormatFlag(NewFlag);
+  }
+  IsNewDbgInfoFormat = NewFlag;
+}
 
 //===----------------------------------------------------------------------===//
 // Argument Implementation
@@ -237,6 +266,13 @@ uint64_t Argument::getDereferenceableOrNullBytes() const {
 
 FPClassTest Argument::getNoFPClass() const {
   return getParent()->getParamNoFPClass(getArgNo());
+}
+
+std::optional<ConstantRange> Argument::getRange() const {
+  const Attribute RangeAttr = getAttribute(llvm::Attribute::Range);
+  if (RangeAttr.isValid())
+    return RangeAttr.getRange();
+  return std::nullopt;
 }
 
 bool Argument::hasNestAttr() const {
@@ -407,7 +443,7 @@ Function::Function(FunctionType *Ty, LinkageTypes Linkage, unsigned AddrSpace,
     : GlobalObject(Ty, Value::FunctionVal,
                    OperandTraits<Function>::op_begin(this), 0, Linkage, name,
                    computeAddrSpace(AddrSpace, ParentModule)),
-      NumArgs(Ty->getNumParams()) {
+      NumArgs(Ty->getNumParams()), IsNewDbgInfoFormat(false) {
   assert(FunctionType::isValidReturnType(getReturnType()) &&
          "invalid return type");
   setGlobalObjectSubClassData(0);
@@ -420,10 +456,12 @@ Function::Function(FunctionType *Ty, LinkageTypes Linkage, unsigned AddrSpace,
   if (Ty->getNumParams())
     setValueSubclassData(1);   // Set the "has lazy arguments" bit.
 
-  if (ParentModule)
+  if (ParentModule) {
     ParentModule->getFunctionList().push_back(this);
+    IsNewDbgInfoFormat = ParentModule->IsNewDbgInfoFormat;
+  }
 
-  HasLLVMReservedName = getName().startswith("llvm.");
+  HasLLVMReservedName = getName().starts_with("llvm.");
   // Ensure intrinsics have the right parameter attributes.
   // Note, the IntID field will have been set in Value::setName if this function
   // name is a valid intrinsic ID.
@@ -466,15 +504,7 @@ static MutableArrayRef<Argument> makeArgArray(Argument *Args, size_t Count) {
 }
 
 bool Function::isConstrainedFPIntrinsic() const {
-  switch (getIntrinsicID()) {
-#define INSTRUCTION(NAME, NARG, ROUND_MODE, INTRINSIC)                         \
-  case Intrinsic::INTRINSIC:
-#include "llvm/IR/ConstrainedOps.def"
-    return true;
-#undef INSTRUCTION
-  default:
-    return false;
-  }
+  return Intrinsic::isConstrainedFPIntrinsic(getIntrinsicID());
 }
 
 void Function::clearArguments() {
@@ -681,6 +711,10 @@ Attribute Function::getFnAttribute(StringRef Kind) const {
   return AttributeSets.getFnAttr(Kind);
 }
 
+Attribute Function::getRetAttribute(Attribute::AttrKind Kind) const {
+  return AttributeSets.getRetAttr(Kind);
+}
+
 uint64_t Function::getFnAttributeAsParsedInteger(StringRef Name,
                                                  uint64_t Default) const {
   Attribute A = getFnAttribute(Name);
@@ -860,7 +894,7 @@ bool Function::isTargetIntrinsic() const {
 ///
 /// Returns the relevant slice of \c IntrinsicNameTable
 static ArrayRef<const char *> findTargetSubtable(StringRef Name) {
-  assert(Name.startswith("llvm."));
+  assert(Name.starts_with("llvm."));
 
   ArrayRef<IntrinsicTargetInfo> Targets(TargetInfos);
   // Drop "llvm." and take the first dotted component. That will be the target
@@ -896,9 +930,10 @@ Intrinsic::ID Function::lookupIntrinsicID(StringRef Name) {
                                                      : Intrinsic::not_intrinsic;
 }
 
-void Function::recalculateIntrinsicID() {
+void Function::updateAfterNameChange() {
+  LibFuncCache = UnknownLibFunc;
   StringRef Name = getName();
-  if (!Name.startswith("llvm.")) {
+  if (!Name.starts_with("llvm.")) {
     HasLLVMReservedName = false;
     IntID = Intrinsic::not_intrinsic;
     return;
@@ -1132,6 +1167,10 @@ static void DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
     return;
   case IIT_V4:
     OutputTable.push_back(IITDescriptor::getVector(4, IsScalableVector));
+    DecodeIITType(NextElt, Infos, Info, OutputTable);
+    return;
+  case IIT_V6:
+    OutputTable.push_back(IITDescriptor::getVector(6, IsScalableVector));
     DecodeIITType(NextElt, Infos, Info, OutputTable);
     return;
   case IIT_V8:
@@ -1443,6 +1482,18 @@ Function *Intrinsic::getDeclaration(Module *M, ID id, ArrayRef<Type*> Tys) {
 #define GET_LLVM_INTRINSIC_FOR_MS_BUILTIN
 #include "llvm/IR/IntrinsicImpl.inc"
 #undef GET_LLVM_INTRINSIC_FOR_MS_BUILTIN
+
+bool Intrinsic::isConstrainedFPIntrinsic(ID QID) {
+  switch (QID) {
+#define INSTRUCTION(NAME, NARG, ROUND_MODE, INTRINSIC)                         \
+  case Intrinsic::INTRINSIC:
+#include "llvm/IR/ConstrainedOps.def"
+    return true;
+#undef INSTRUCTION
+  default:
+    return false;
+  }
+}
 
 using DeferredIntrinsicMatchPair =
     std::pair<Type *, ArrayRef<Intrinsic::IITDescriptor>>;

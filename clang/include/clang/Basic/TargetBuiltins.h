@@ -86,7 +86,7 @@ namespace clang {
   enum {
     LastTIBuiltin = clang::Builtin::FirstTSBuiltin - 1,
   #define BUILTIN(ID, TYPE, ATTRS) BI##ID,
-  #include "clang/Basic/BuiltinsBPF.def"
+  #include "clang/Basic/BuiltinsBPF.inc"
     LastTSBuiltin
   };
   }
@@ -161,7 +161,7 @@ namespace clang {
     FirstRVVBuiltin = clang::Builtin::FirstTSBuiltin,
     LastRVVBuiltin = RISCVVector::FirstTSBuiltin - 1,
 #define BUILTIN(ID, TYPE, ATTRS) BI##ID,
-#include "clang/Basic/BuiltinsRISCV.def"
+#include "clang/Basic/BuiltinsRISCV.inc"
     LastTSBuiltin
   };
   } // namespace RISCV
@@ -293,7 +293,9 @@ namespace clang {
     bool isZExtReturn() const { return Flags & IsZExtReturn; }
     bool isByteIndexed() const { return Flags & IsByteIndexed; }
     bool isOverloadNone() const { return Flags & IsOverloadNone; }
-    bool isOverloadWhile() const { return Flags & IsOverloadWhile; }
+    bool isOverloadWhileOrMultiVecCvt() const {
+      return Flags & IsOverloadWhileOrMultiVecCvt;
+    }
     bool isOverloadDefault() const { return !(Flags & OverloadKindMask); }
     bool isOverloadWhileRW() const { return Flags & IsOverloadWhileRW; }
     bool isOverloadCvt() const { return Flags & IsOverloadCvt; }
@@ -311,7 +313,7 @@ namespace clang {
     bool isTupleSet() const { return Flags & IsTupleSet; }
     bool isReadZA() const { return Flags & IsReadZA; }
     bool isWriteZA() const { return Flags & IsWriteZA; }
-
+    bool isReductionQV() const { return Flags & IsReductionQV; }
     uint64_t getBits() const { return Flags; }
     bool isFlagSet(uint64_t Flag) const { return Flags & Flag; }
   };

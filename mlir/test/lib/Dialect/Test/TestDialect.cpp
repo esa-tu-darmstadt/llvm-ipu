@@ -53,6 +53,7 @@ using namespace test;
 Attribute MyPropStruct::asAttribute(MLIRContext *ctx) const {
   return StringAttr::get(ctx, content);
 }
+
 LogicalResult
 MyPropStruct::setFromAttr(MyPropStruct &prop, Attribute attr,
                           function_ref<InFlightDiagnostic()> emitError) {
@@ -64,6 +65,7 @@ MyPropStruct::setFromAttr(MyPropStruct &prop, Attribute attr,
   prop.content = strAttr.getValue();
   return success();
 }
+
 llvm::hash_code MyPropStruct::hash() const {
   return hash_value(StringRef(content));
 }
@@ -127,6 +129,12 @@ static void customPrintProperties(OpAsmPrinter &p,
                                   const VersionedProperties &prop);
 static ParseResult customParseProperties(OpAsmParser &parser,
                                          VersionedProperties &prop);
+static ParseResult
+parseSwitchCases(OpAsmParser &p, DenseI64ArrayAttr &cases,
+                 SmallVectorImpl<std::unique_ptr<Region>> &caseRegions);
+
+static void printSwitchCases(OpAsmPrinter &p, Operation *op,
+                             DenseI64ArrayAttr cases, RegionRange caseRegions);
 
 void test::registerTestDialect(DialectRegistry &registry) {
   registry.insert<TestDialect>();
@@ -230,6 +238,7 @@ void TestDialect::initialize() {
   // unregistered op.
   fallbackEffectOpInterfaces = new TestOpEffectInterfaceFallback;
 }
+
 TestDialect::~TestDialect() {
   delete static_cast<TestOpEffectInterfaceFallback *>(
       fallbackEffectOpInterfaces);
@@ -491,6 +500,108 @@ void AffineScopeOp::print(OpAsmPrinter &p) {
 }
 
 //===----------------------------------------------------------------------===//
+// Test OptionalCustomAttrOp
+//===----------------------------------------------------------------------===//
+
+static OptionalParseResult parseOptionalCustomParser(AsmParser &p,
+                                                     IntegerAttr &result) {
+  if (succeeded(p.parseOptionalKeyword("foo")))
+    return p.parseAttribute(result);
+  return {};
+}
+
+static void printOptionalCustomParser(AsmPrinter &p, Operation *,
+                                      IntegerAttr result) {
+  p << "foo ";
+  p.printAttribute(result);
+}
+
+//===----------------------------------------------------------------------===//
+// ReifyBoundOp
+//===----------------------------------------------------------------------===//
+
+::mlir::presburger::BoundType ReifyBoundOp::getBoundType() {
+  if (getType() == "EQ")
+    return ::mlir::presburger::BoundType::EQ;
+  if (getType() == "LB")
+    return ::mlir::presburger::BoundType::LB;
+  if (getType() == "UB")
+    return ::mlir::presburger::BoundType::UB;
+  llvm_unreachable("invalid bound type");
+}
+
+LogicalResult ReifyBoundOp::verify() {
+  if (isa<ShapedType>(getVar().getType())) {
+    if (!getDim().has_value())
+      return emitOpError("expected 'dim' attribute for shaped type variable");
+  } else if (getVar().getType().isIndex()) {
+    if (getDim().has_value())
+      return emitOpError("unexpected 'dim' attribute for index variable");
+  } else {
+    return emitOpError("expected index-typed variable or shape type variable");
+  }
+  if (getConstant() && getScalable())
+    return emitOpError("'scalable' and 'constant' are mutually exlusive");
+  if (getScalable() != getVscaleMin().has_value())
+    return emitOpError("expected 'vscale_min' if and only if 'scalable'");
+  if (getScalable() != getVscaleMax().has_value())
+    return emitOpError("expected 'vscale_min' if and only if 'scalable'");
+  return success();
+}
+
+::mlir::ValueBoundsConstraintSet::Variable ReifyBoundOp::getVariable() {
+  if (getDim().has_value())
+    return ValueBoundsConstraintSet::Variable(getVar(), *getDim());
+  return ValueBoundsConstraintSet::Variable(getVar());
+}
+
+::mlir::ValueBoundsConstraintSet::ComparisonOperator
+CompareOp::getComparisonOperator() {
+  if (getCmp() == "EQ")
+    return ValueBoundsConstraintSet::ComparisonOperator::EQ;
+  if (getCmp() == "LT")
+    return ValueBoundsConstraintSet::ComparisonOperator::LT;
+  if (getCmp() == "LE")
+    return ValueBoundsConstraintSet::ComparisonOperator::LE;
+  if (getCmp() == "GT")
+    return ValueBoundsConstraintSet::ComparisonOperator::GT;
+  if (getCmp() == "GE")
+    return ValueBoundsConstraintSet::ComparisonOperator::GE;
+  llvm_unreachable("invalid comparison operator");
+}
+
+::mlir::ValueBoundsConstraintSet::Variable CompareOp::getLhs() {
+  if (!getLhsMap())
+    return ValueBoundsConstraintSet::Variable(getVarOperands()[0]);
+  SmallVector<Value> mapOperands(
+      getVarOperands().slice(0, getLhsMap()->getNumInputs()));
+  return ValueBoundsConstraintSet::Variable(*getLhsMap(), mapOperands);
+}
+
+::mlir::ValueBoundsConstraintSet::Variable CompareOp::getRhs() {
+  int64_t rhsOperandsBegin = getLhsMap() ? getLhsMap()->getNumInputs() : 1;
+  if (!getRhsMap())
+    return ValueBoundsConstraintSet::Variable(
+        getVarOperands()[rhsOperandsBegin]);
+  SmallVector<Value> mapOperands(
+      getVarOperands().slice(rhsOperandsBegin, getRhsMap()->getNumInputs()));
+  return ValueBoundsConstraintSet::Variable(*getRhsMap(), mapOperands);
+}
+
+LogicalResult CompareOp::verify() {
+  if (getCompose() && (getLhsMap() || getRhsMap()))
+    return emitOpError(
+        "'compose' not supported when 'lhs_map' or 'rhs_map' is present");
+  int64_t expectedNumOperands = getLhsMap() ? getLhsMap()->getNumInputs() : 1;
+  expectedNumOperands += getRhsMap() ? getRhsMap()->getNumInputs() : 1;
+  if (getVarOperands().size() != size_t(expectedNumOperands))
+    return emitOpError("expected ")
+           << expectedNumOperands << " operands, but got "
+           << getVarOperands().size();
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // Test removing op with inner ops.
 //===----------------------------------------------------------------------===//
 
@@ -529,16 +640,17 @@ LogicalResult TestOpWithVariadicResultsAndFolder::fold(
 }
 
 OpFoldResult TestOpInPlaceFold::fold(FoldAdaptor adaptor) {
+  // Exercise the fact that an operation created with createOrFold should be
+  // allowed to access its parent block.
+  assert(getOperation()->getBlock() &&
+         "expected that operation is not unlinked");
+
   if (adaptor.getOp() && !getProperties().attr) {
     // The folder adds "attr" if not present.
     getProperties().attr = dyn_cast_or_null<IntegerAttr>(adaptor.getOp());
     return getResult();
   }
   return {};
-}
-
-OpFoldResult TestPassthroughFold::fold(FoldAdaptor adaptor) {
-  return getOperand();
 }
 
 OpFoldResult TestOpFoldWithFoldAdaptor::fold(FoldAdaptor adaptor) {
@@ -710,6 +822,17 @@ LogicalResult OpWithResultShapePerDimInterfaceOp::reifyResultShapes(
         }));
     shapes.emplace_back(std::move(currShape));
   }
+  return success();
+}
+
+LogicalResult TestOpWithPropertiesAndInferredType::inferReturnTypes(
+    MLIRContext *context, std::optional<Location>, ValueRange operands,
+    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+
+  Adaptor adaptor(operands, attributes, properties, regions);
+  inferredReturnTypes.push_back(IntegerType::get(
+      context, adaptor.getLhs() + adaptor.getProperties().rhs));
   return success();
 }
 
@@ -998,7 +1121,7 @@ void LoopBlockOp::getSuccessorRegions(
 
 OperandRange LoopBlockOp::getEntrySuccessorOperands(RegionBranchPoint point) {
   assert(point == getBody());
-  return getInitMutable();
+  return MutableOperandRange(getInitMutable());
 }
 
 //===----------------------------------------------------------------------===//
@@ -1011,6 +1134,13 @@ LoopBlockTerminatorOp::getMutableSuccessorOperands(RegionBranchPoint point) {
     return getExitArgMutable();
   return getNextIterArgMutable();
 }
+
+//===----------------------------------------------------------------------===//
+// SwitchWithNoBreakOp
+//===----------------------------------------------------------------------===//
+
+void TestNoTerminatorOp::getSuccessorRegions(
+    RegionBranchPoint point, SmallVectorImpl<RegionSuccessor> &regions) {}
 
 //===----------------------------------------------------------------------===//
 // SingleNoTerminatorCustomAsmOp
@@ -1159,6 +1289,7 @@ setPropertiesFromAttribute(PropertiesWithCustomPrint &prop, Attribute attr,
   prop.value = valueAttr.getValue().getSExtValue();
   return success();
 }
+
 static DictionaryAttr
 getPropertiesAsAttribute(MLIRContext *ctx,
                          const PropertiesWithCustomPrint &prop) {
@@ -1168,14 +1299,17 @@ getPropertiesAsAttribute(MLIRContext *ctx,
   attrs.push_back(b.getNamedAttr("value", b.getI32IntegerAttr(prop.value)));
   return b.getDictionaryAttr(attrs);
 }
+
 static llvm::hash_code computeHash(const PropertiesWithCustomPrint &prop) {
   return llvm::hash_combine(prop.value, StringRef(*prop.label));
 }
+
 static void customPrintProperties(OpAsmPrinter &p,
                                   const PropertiesWithCustomPrint &prop) {
   p.printKeywordOrString(*prop.label);
   p << " is " << prop.value;
 }
+
 static ParseResult customParseProperties(OpAsmParser &parser,
                                          PropertiesWithCustomPrint &prop) {
   std::string label;
@@ -1185,6 +1319,31 @@ static ParseResult customParseProperties(OpAsmParser &parser,
   prop.label = std::make_shared<std::string>(std::move(label));
   return success();
 }
+
+static ParseResult
+parseSwitchCases(OpAsmParser &p, DenseI64ArrayAttr &cases,
+                 SmallVectorImpl<std::unique_ptr<Region>> &caseRegions) {
+  SmallVector<int64_t> caseValues;
+  while (succeeded(p.parseOptionalKeyword("case"))) {
+    int64_t value;
+    Region &region = *caseRegions.emplace_back(std::make_unique<Region>());
+    if (p.parseInteger(value) || p.parseRegion(region, /*arguments=*/{}))
+      return failure();
+    caseValues.push_back(value);
+  }
+  cases = p.getBuilder().getDenseI64ArrayAttr(caseValues);
+  return success();
+}
+
+static void printSwitchCases(OpAsmPrinter &p, Operation *op,
+                             DenseI64ArrayAttr cases, RegionRange caseRegions) {
+  for (auto [value, region] : llvm::zip(cases.asArrayRef(), caseRegions)) {
+    p.printNewline();
+    p << "case " << value << ' ';
+    p.printRegion(*region, /*printEntryBlockArgs=*/false);
+  }
+}
+
 static LogicalResult
 setPropertiesFromAttribute(VersionedProperties &prop, Attribute attr,
                            function_ref<InFlightDiagnostic()> emitError) {
@@ -1208,6 +1367,7 @@ setPropertiesFromAttribute(VersionedProperties &prop, Attribute attr,
   prop.value2 = value2Attr.getValue().getSExtValue();
   return success();
 }
+
 static DictionaryAttr
 getPropertiesAsAttribute(MLIRContext *ctx, const VersionedProperties &prop) {
   SmallVector<NamedAttribute> attrs;
@@ -1216,13 +1376,16 @@ getPropertiesAsAttribute(MLIRContext *ctx, const VersionedProperties &prop) {
   attrs.push_back(b.getNamedAttr("value2", b.getI32IntegerAttr(prop.value2)));
   return b.getDictionaryAttr(attrs);
 }
+
 static llvm::hash_code computeHash(const VersionedProperties &prop) {
   return llvm::hash_combine(prop.value1, prop.value2);
 }
+
 static void customPrintProperties(OpAsmPrinter &p,
                                   const VersionedProperties &prop) {
   p << prop.value1 << " | " << prop.value2;
 }
+
 static ParseResult customParseProperties(OpAsmParser &parser,
                                          VersionedProperties &prop) {
   if (parser.parseInteger(prop.value1) || parser.parseVerticalBar() ||
@@ -1269,6 +1432,21 @@ static bool parseSumProperty(OpAsmParser &parser, int64_t &second,
 static void printSumProperty(OpAsmPrinter &printer, Operation *op,
                              int64_t second, int64_t first) {
   printer << second << " = " << (second + first);
+}
+
+//===----------------------------------------------------------------------===//
+// Tensor/Buffer Ops
+//===----------------------------------------------------------------------===//
+
+void ReadBufferOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // The buffer operand is read.
+  effects.emplace_back(MemoryEffects::Read::get(), getBuffer(),
+                       SideEffects::DefaultResource::get());
+  // The buffer contents are dumped.
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
 }
 
 //===----------------------------------------------------------------------===//
@@ -1334,7 +1512,7 @@ TestVersionedOpA::readProperties(::mlir::DialectBytecodeReader &reader,
 
   // Check if we have a version. If not, assume we are parsing the current
   // version.
-  auto maybeVersion = reader.getDialectVersion("test");
+  auto maybeVersion = reader.getDialectVersion<test::TestDialect>();
   if (succeeded(maybeVersion)) {
     // If version is less than 2.0, there is no additional attribute to parse.
     // We can materialize missing properties post parsing before verification.
@@ -1353,6 +1531,17 @@ TestVersionedOpA::readProperties(::mlir::DialectBytecodeReader &reader,
 void TestVersionedOpA::writeProperties(::mlir::DialectBytecodeWriter &writer) {
   auto &prop = getProperties();
   writer.writeAttribute(prop.dims);
+
+  auto maybeVersion = writer.getDialectVersion<test::TestDialect>();
+  if (succeeded(maybeVersion)) {
+    // If version is less than 2.0, there is no additional attribute to write.
+    const auto *version =
+        reinterpret_cast<const TestDialectVersion *>(*maybeVersion);
+    if ((version->major_ < 2)) {
+      llvm::outs() << "downgrading op properties...\n";
+      return;
+    }
+  }
   writer.writeAttribute(prop.modifier);
 }
 
@@ -1364,7 +1553,7 @@ void TestVersionedOpA::writeProperties(::mlir::DialectBytecodeWriter &writer) {
 
   // Check if we have a version. If not, assume we are parsing the current
   // version.
-  auto maybeVersion = reader.getDialectVersion("test");
+  auto maybeVersion = reader.getDialectVersion<test::TestDialect>();
   bool needToParseAnotherInt = true;
   if (succeeded(maybeVersion)) {
     // If version is less than 2.0, there is no additional attribute to parse.
@@ -1381,6 +1570,7 @@ void TestVersionedOpA::writeProperties(::mlir::DialectBytecodeWriter &writer) {
   prop.value2 = value2;
   return success();
 }
+
 void TestOpWithVersionedProperties::writeToMlirBytecode(
     ::mlir::DialectBytecodeWriter &writer,
     const test::VersionedProperties &prop) {

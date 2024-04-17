@@ -83,6 +83,7 @@ endif()
 list(REMOVE_DUPLICATES LIBOMPTARGET_DEVICE_ARCHITECTURES)
 
 set(include_files
+  ${include_directory}/Allocator.h
   ${include_directory}/Configuration.h
   ${include_directory}/Debug.h
   ${include_directory}/Interface.h
@@ -95,6 +96,7 @@ set(include_files
 )
 
 set(src_files
+  ${source_directory}/Allocator.cpp
   ${source_directory}/Configuration.cpp
   ${source_directory}/Debug.cpp
   ${source_directory}/Kernel.cpp
@@ -119,6 +121,11 @@ set(src_files
 set(clang_opt_flags -O3 -mllvm -openmp-opt-disable -DSHARED_SCRATCHPAD_SIZE=512 -mllvm -vectorize-slp=false )
 set(link_opt_flags  -O3        -openmp-opt-disable -attributor-enable=module -vectorize-slp=false )
 set(link_export_flag -passes=internalize -internalize-public-api-file=${source_directory}/exports)
+
+# If the user built with the GPU C library enabled we will use that instead.
+if(${LIBOMPTARGET_GPU_LIBC_SUPPORT})
+  list(APPEND clang_opt_flags -DOMPTARGET_HAS_LIBC)
+endif()
 
 # Prepend -I to each list element
 set (LIBOMPTARGET_LLVM_INCLUDE_DIRS_DEVICERTL "${LIBOMPTARGET_LLVM_INCLUDE_DIRS}")
@@ -230,7 +237,7 @@ function(compileDeviceRTLLibrary target_cpu target_name target_triple)
 
   set(target_feature "")
   if("${target_triple}" STREQUAL "nvptx64-nvidia-cuda")
-    set(target_feature "feature=+ptx61")
+    set(target_feature "feature=+ptx63")
   endif()
 
   # Package the bitcode in the bitcode and embed it in an ELF for the static library
@@ -291,7 +298,7 @@ foreach(gpu_arch ${LIBOMPTARGET_DEVICE_ARCHITECTURES})
   if("${gpu_arch}" IN_LIST all_amdgpu_architectures)
     compileDeviceRTLLibrary(${gpu_arch} amdgpu amdgcn-amd-amdhsa -Xclang -mcode-object-version=none)
   elseif("${gpu_arch}" IN_LIST all_nvptx_architectures)
-    compileDeviceRTLLibrary(${gpu_arch} nvptx nvptx64-nvidia-cuda --cuda-feature=+ptx61)
+    compileDeviceRTLLibrary(${gpu_arch} nvptx nvptx64-nvidia-cuda --cuda-feature=+ptx63)
   else()
     libomptarget_error_say("Unknown GPU architecture '${gpu_arch}'")
   endif()
@@ -299,7 +306,10 @@ endforeach()
 
 # Archive all the object files generated above into a static library
 add_library(omptarget.devicertl STATIC)
-set_target_properties(omptarget.devicertl PROPERTIES LINKER_LANGUAGE CXX)
+set_target_properties(omptarget.devicertl PROPERTIES
+  ARCHIVE_OUTPUT_DIRECTORY "${LIBOMPTARGET_LLVM_LIBRARY_INTDIR}"
+  LINKER_LANGUAGE CXX
+)
 target_link_libraries(omptarget.devicertl PRIVATE omptarget.devicertl.all_objs)
 
 install(TARGETS omptarget.devicertl ARCHIVE DESTINATION ${OPENMP_INSTALL_LIBDIR})

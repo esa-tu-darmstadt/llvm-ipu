@@ -1,5 +1,5 @@
 ; This file has been modified by Graphcore Ltd.
-; REQUIRES: x86
+; REQUIRES: x86, non-root-user
 ; IPU local patch begin
 ; UNSUPPORTED: true
 ; IPU local patch end
