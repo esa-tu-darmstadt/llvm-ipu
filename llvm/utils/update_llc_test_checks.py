@@ -54,12 +54,12 @@ def main():
         default=False,
         help="Reduce scrubbing shuffles with memory operands",
     )
-  # IPU local patch begin
-  parser.add_argument(
-      '--remove_checks', action='store_true', default=False,
-      help='Reduce scrubbing shuffles with memory operands')
-# IPU local patch end
-  parser.add_argument("tests", nargs="+")
+    # IPU local patch begin
+    parser.add_argument(
+        '--remove_checks', action='store_true', default=False,
+        help='Reduce scrubbing shuffles with memory operands')
+    # IPU local patch end
+    parser.add_argument("tests", nargs="+")
     initial_args = common.parse_commandline_args(parser)
 
     script_name = os.path.basename(__file__)
@@ -264,14 +264,14 @@ def main():
                         is_in_function = False
                     continue
 
-                        # IPU local patch begin        
+                # IPU local patch begin        
                 # remove old checks that appear outside of the function.
                 # we want this when migrating to use update_llc_test_checks.py
                 if initial_args.remove_checks:
-                if input_line.lstrip().startswith(';'):
-                    if common.CHECK_RE.match(input_line) and not common.RUN_LINE_RE.match(input_line):
-                    continue
-        # IPU local patch end
+                    if input_line.lstrip().startswith(';'):
+                        if common.CHECK_RE.match(input_line) and not common.RUN_LINE_RE.match(input_line):
+                            continue
+                # IPU local patch end
 
                 # If it's outside a function, it just gets copied to the output.
                 output_lines.append(input_line)
