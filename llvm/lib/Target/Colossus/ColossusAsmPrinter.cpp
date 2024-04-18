@@ -117,6 +117,10 @@ void ColossusAsmPrinter::emitFunctionEntryLabel() {
   if (getSubtargetInfo().getFeatureBits()[Colossus::ModeWorker]) {
     OutStreamer->emitAssemblerFlag(llvm::MCAF_Worker);
   }
+  if (getSubtargetInfo().getFeatureBits()[Colossus::ModeBoth]) {
+    OutStreamer->emitAssemblerFlag(llvm::MCAF_Supervisor);
+    OutStreamer->emitAssemblerFlag(llvm::MCAF_Worker);
+  }
 }
 
 void ColossusAsmPrinter::emitFunctionBodyStart() {
