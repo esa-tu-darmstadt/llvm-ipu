@@ -69,19 +69,22 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
     ipuArchName = MArch.str();
   }
 
-  // runtime/lib
-  SmallString<128> LibDir(Driver.getInstalledDir());
-  llvm::sys::path::append(LibDir, "..", "colossus");
-  supervisor ? llvm::sys::path::append(LibDir, "supervisor", "lib")
-             : llvm::sys::path::append(LibDir, "lib");
-  CmdArgs.push_back(Args.MakeArgString(Twine("-L") + LibDir.str()));
+  SmallString<128> LibBaseDir;
+  SmallString<128> SupervisorLibBaseDir;
+  if (C.getSysRoot().empty()) {
+    LibBaseDir = Driver.getInstalledDir();
+    llvm::sys::path::append(LibBaseDir, "..", "colossus");
+    SupervisorLibBaseDir = LibBaseDir;
+    llvm::sys::path::append(SupervisorLibBaseDir, "supervisor", "lib");
+    llvm::sys::path::append(LibBaseDir, "lib");
+  } else {
+    // Poplar base directory
+    LibBaseDir = C.getSysRoot();
+    llvm::sys::path::append(LibBaseDir, "lib", "graphcore", "lib");
+  }
 
-  // compiler-rt
-  LibDir.clear();
-  LibDir.append(Driver.getInstalledDir());
-  llvm::sys::path::append(LibDir, "..", "lib", "graphcore");
-  llvm::sys::path::append(LibDir, "lib", ipuArchName);
-  CmdArgs.push_back(Args.MakeArgString(Twine("-L") + LibDir.str()));
+  // builtins and compiler-rt
+  CmdArgs.push_back(Args.MakeArgString(Twine("-L") + LibBaseDir));
 
   // Output file.
   if (Output.isFilename()) {
@@ -93,10 +96,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Start files.
   if (incStartFiles && incStdLib && !buildingLib) {
-    SmallString<128> CrtPath(Driver.getInstalledDir());
-    llvm::sys::path::append(CrtPath, "..", "colossus");
-    supervisor ? llvm::sys::path::append(CrtPath, "supervisor", "lib")
-               : llvm::sys::path::append(CrtPath, "lib");
+    SmallString<128> CrtPath(supervisor ? SupervisorLibBaseDir : LibBaseDir);
     std::string crtName = "crt_";
     crtName += ipuArchName;
     crtName += ".o";
@@ -106,9 +106,8 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Linker script
   if (incStdLdScript) {
-    SmallString<128> ScriptDirPath(Driver.getInstalledDir());
-    llvm::sys::path::append(ScriptDirPath, "..", "colossus", "lib",
-                            "ldscripts");
+    SmallString<128> ScriptDirPath(LibBaseDir);
+    llvm::sys::path::append(ScriptDirPath, "ldscripts");
     CmdArgs.push_back(Args.MakeArgString(Twine("-L") + ScriptDirPath.str()));
     std::string linkerScript = ipuArchName + ".x";
     CmdArgs.push_back(Args.MakeArgString(Twine("--script=") + linkerScript));
@@ -129,7 +128,10 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
     lib += ipuArchName;
     CmdArgs.push_back(Args.MakeArgString(lib));
     // clang_rt library.
-    CmdArgs.push_back(Args.MakeArgString("-lclang_rt.builtins-ipu"));
+    lib = "-l";
+    lib += "clang_rt.builtins_";
+    lib += ipuArchName;
+    CmdArgs.push_back(Args.MakeArgString(lib));
   }
 
   const char *Exec = Args.MakeArgString(getToolChain().GetLinkerPath());
