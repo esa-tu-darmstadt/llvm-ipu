@@ -70,7 +70,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // runtime/lib
-  SmallString<128> LibDir(Driver.InstalledDir);
+  SmallString<128> LibDir(Driver.getInstalledDir());
   llvm::sys::path::append(LibDir, "..", "colossus");
   supervisor ? llvm::sys::path::append(LibDir, "supervisor", "lib")
              : llvm::sys::path::append(LibDir, "lib");
@@ -78,7 +78,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // compiler-rt
   LibDir.clear();
-  LibDir.append(Driver.InstalledDir);
+  LibDir.append(Driver.getInstalledDir());
   llvm::sys::path::append(LibDir, "..", "lib", "graphcore");
   llvm::sys::path::append(LibDir, "lib", ipuArchName);
   CmdArgs.push_back(Args.MakeArgString(Twine("-L") + LibDir.str()));
@@ -93,7 +93,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Start files.
   if (incStartFiles && incStdLib && !buildingLib) {
-    SmallString<128> CrtPath(Driver.InstalledDir);
+    SmallString<128> CrtPath(Driver.getInstalledDir());
     llvm::sys::path::append(CrtPath, "..", "colossus");
     supervisor ? llvm::sys::path::append(CrtPath, "supervisor", "lib")
                : llvm::sys::path::append(CrtPath, "lib");
@@ -106,7 +106,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Linker script
   if (incStdLdScript) {
-    SmallString<128> ScriptDirPath(Driver.InstalledDir);
+    SmallString<128> ScriptDirPath(Driver.getInstalledDir());
     llvm::sys::path::append(ScriptDirPath, "..", "colossus", "lib",
                             "ldscripts");
     CmdArgs.push_back(Args.MakeArgString(Twine("-L") + ScriptDirPath.str()));
@@ -116,7 +116,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   ToolChain.AddFilePathLibArgs(Args, CmdArgs);
-  Args.AddAllArgs(CmdArgs,
+  Args.addAllArgs(CmdArgs,
                   {options::OPT_T_Group, options::OPT_e, options::OPT_s,
                    options::OPT_t, options::OPT_Z_Flag, options::OPT_r});
 

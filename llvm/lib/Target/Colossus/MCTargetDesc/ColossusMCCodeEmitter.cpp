@@ -34,9 +34,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "Colossus.h"
-#include "MCTargetDesc/ColossusMCTargetDesc.h"
 #include "MCTargetDesc/ColossusMCFixups.h"
 #include "MCTargetDesc/ColossusMCInstrInfo.h"
+#include "MCTargetDesc/ColossusMCTargetDesc.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
@@ -55,8 +56,7 @@ class ColossusMCCodeEmitter : public MCCodeEmitter {
 
 public:
   ColossusMCCodeEmitter(const MCInstrInfo &mcii, MCContext &ctx)
-    : MCII(mcii), Ctx(ctx) {
-  }
+      : MCII(mcii), Ctx(ctx) {}
 
   ~ColossusMCCodeEmitter() {}
 
@@ -77,9 +77,9 @@ private:
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const;
   unsigned getOpValue(const MCInst &MI, unsigned OpNo,
-                  SmallVectorImpl<MCFixup> &Fixups,
-                  const MCSubtargetInfo &STI,
-                  llvm::Colossus::Fixups fixup_type) const;
+                      SmallVectorImpl<MCFixup> &Fixups,
+                      const MCSubtargetInfo &STI,
+                      llvm::Colossus::Fixups fixup_type) const;
   unsigned getRel19S2OpValue(const MCInst &MI, unsigned OpNo,
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const;
@@ -126,10 +126,9 @@ MCCodeEmitter *llvm::createColossusMCCodeEmitter(const MCInstrInfo &MCII,
   return new ColossusMCCodeEmitter(MCII, Ctx);
 }
 
-void ColossusMCCodeEmitter::
-EncodeSingleInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
-                  SmallVectorImpl<MCFixup> &Fixups,
-                  const MCSubtargetInfo &STI) const {
+void ColossusMCCodeEmitter::EncodeSingleInstruction(
+    const MCInst &MI, SmallVectorImpl<char> &CB,
+    SmallVectorImpl<MCFixup> &Fixups, const MCSubtargetInfo &STI) const {
   uint64_t Bits = getBinaryCodeForInstr(MI, Fixups, STI);
   unsigned Size = MCII.get(MI.getOpcode()).getSize();
 
@@ -144,18 +143,16 @@ EncodeSingleInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
   }
 
   if (Size == 4) {
-    support::endian::write<uint32_t>(CB, Bits, support::little);
-  }
-  else {
-    assert (Size == 8 && "Unexpected instruction siz when trying to encode");
-    support::endian::write<uint64_t>(CB, Bits, support::little);
+    support::endian::write<uint32_t>(CB, Bits, endianness::little);
+  } else {
+    assert(Size == 8 && "Unexpected instruction siz when trying to encode");
+    support::endian::write<uint64_t>(CB, Bits, endianness::little);
   }
 }
 
-void ColossusMCCodeEmitter::
-encodeInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
-                  SmallVectorImpl<MCFixup> &Fixups,
-                  const MCSubtargetInfo &STI) const {
+void ColossusMCCodeEmitter::encodeInstruction(
+    const MCInst &MI, SmallVectorImpl<char> &CB,
+    SmallVectorImpl<MCFixup> &Fixups, const MCSubtargetInfo &STI) const {
 
   if (MI.getOpcode() == TargetOpcode::BUNDLE) {
     unsigned InstOffset = 0;
@@ -167,7 +164,7 @@ encodeInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
       // correct the offset of the fixup for instructions in the bundle.
       if (Fixups.size() > FixupsBeforeEncoding) {
         for (; FixupsBeforeEncoding < Fixups.size(); ++FixupsBeforeEncoding) {
-          auto & Fixup = Fixups[FixupsBeforeEncoding];
+          auto &Fixup = Fixups[FixupsBeforeEncoding];
           Fixup.setOffset(InstOffset);
         }
       }
@@ -181,46 +178,46 @@ encodeInstruction(const MCInst &MI, SmallVectorImpl<char> &CB,
   }
 }
 
-unsigned ColossusMCCodeEmitter::
-getMEMrrEncoding(const MCInst &MI, unsigned OpNo,
-                 SmallVectorImpl<MCFixup> &Fixups,
-                 const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getMEMrrEncoding(const MCInst &MI, unsigned OpNo,
+                                        SmallVectorImpl<MCFixup> &Fixups,
+                                        const MCSubtargetInfo &STI) const {
   // 4-bit base and offset registers
   // offset[7:4], base[3:0]
-  unsigned BaseRegBits = getMachineOpValue(MI, MI.getOperand(OpNo),
-                                           Fixups, STI);
-  unsigned OffRegBits = getMachineOpValue(MI, MI.getOperand(OpNo + 1),
-                                          Fixups, STI);
+  unsigned BaseRegBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo), Fixups, STI);
+  unsigned OffRegBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo + 1), Fixups, STI);
   return (OffRegBits << 4) | BaseRegBits;
 }
 
-unsigned ColossusMCCodeEmitter::
-getMEMrrrEncoding(const MCInst &MI, unsigned OpNo,
-                  SmallVectorImpl<MCFixup> &Fixups,
-                  const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getMEMrrrEncoding(const MCInst &MI, unsigned OpNo,
+                                         SmallVectorImpl<MCFixup> &Fixups,
+                                         const MCSubtargetInfo &STI) const {
   // 4-bit base, delta and offset registers
   // offset[11:8], delta[7:4], base[3:0]
-  unsigned BaseRegBits = getMachineOpValue(MI, MI.getOperand(OpNo),
-                                           Fixups, STI);
-  unsigned DeltaRegBits = getMachineOpValue(MI, MI.getOperand(OpNo + 1),
-                                            Fixups, STI);
-  unsigned OffRegBits = getMachineOpValue(MI, MI.getOperand(OpNo + 2),
-                                          Fixups, STI);
+  unsigned BaseRegBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo), Fixups, STI);
+  unsigned DeltaRegBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo + 1), Fixups, STI);
+  unsigned OffRegBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo + 2), Fixups, STI);
   return (OffRegBits << 8) | (DeltaRegBits << 4) | BaseRegBits;
 }
 
-unsigned ColossusMCCodeEmitter::
-getMEMrriEncoding(const MCInst &MI, unsigned OpNo,
-                  SmallVectorImpl<MCFixup> &Fixups,
-                  const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getMEMrriEncoding(const MCInst &MI, unsigned OpNo,
+                                         SmallVectorImpl<MCFixup> &Fixups,
+                                         const MCSubtargetInfo &STI) const {
   // 4-bit register base and delta, 12-bit immediate offset.
   // offset[19:8], delta[7:4], base[3:0]
-  unsigned BaseRegBits = getMachineOpValue(MI, MI.getOperand(OpNo),
-                                           Fixups, STI);
-  unsigned DeltaRegBits = getMachineOpValue(MI, MI.getOperand(OpNo + 1),
-                                            Fixups, STI);
-  unsigned OffImmBits = getMachineOpValue(MI, MI.getOperand(OpNo + 2),
-                                          Fixups, STI);
+  unsigned BaseRegBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo), Fixups, STI);
+  unsigned DeltaRegBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo + 1), Fixups, STI);
+  unsigned OffImmBits =
+      getMachineOpValue(MI, MI.getOperand(OpNo + 2), Fixups, STI);
   return (OffImmBits << 8) | (DeltaRegBits << 4) | BaseRegBits;
 }
 
@@ -228,8 +225,8 @@ getMEMrriEncoding(const MCInst &MI, unsigned OpNo,
 /// operand requires relocation, record the relocation and return zero.
 unsigned
 ColossusMCCodeEmitter::getMachineOpValue(const MCInst &MI, const MCOperand &MO,
-                                      SmallVectorImpl<MCFixup> &Fixups,
-                                      const MCSubtargetInfo &STI) const {
+                                         SmallVectorImpl<MCFixup> &Fixups,
+                                         const MCSubtargetInfo &STI) const {
   if (MO.isReg())
     return Ctx.getRegisterInfo()->getEncodingValue(MO.getReg());
 
@@ -237,61 +234,58 @@ ColossusMCCodeEmitter::getMachineOpValue(const MCInst &MI, const MCOperand &MO,
   return static_cast<unsigned>(MO.getImm());
 }
 
-unsigned ColossusMCCodeEmitter::getOpValue(const MCInst &MI, unsigned OpNo,
-                  SmallVectorImpl<MCFixup> &Fixups,
-                  const MCSubtargetInfo &STI,
-                  llvm::Colossus::Fixups fixup_type) const {
-    const MCOperand &MO = MI.getOperand(OpNo);
+unsigned ColossusMCCodeEmitter::getOpValue(
+    const MCInst &MI, unsigned OpNo, SmallVectorImpl<MCFixup> &Fixups,
+    const MCSubtargetInfo &STI, llvm::Colossus::Fixups fixup_type) const {
+  const MCOperand &MO = MI.getOperand(OpNo);
   if (MO.isReg() || MO.isImm())
     return getMachineOpValue(MI, MO, Fixups, STI);
 
-  MCFixupKind FU = (MCFixupKind) fixup_type;
+  MCFixupKind FU = (MCFixupKind)fixup_type;
   Fixups.push_back(MCFixup::create(0, MO.getExpr(), FU));
   return 0;
-
 }
 
-unsigned ColossusMCCodeEmitter::
-getRel19S2OpValue(const MCInst &MI, unsigned OpNo,
-                  SmallVectorImpl<MCFixup> &Fixups,
-                  const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getRel19S2OpValue(const MCInst &MI, unsigned OpNo,
+                                         SmallVectorImpl<MCFixup> &Fixups,
+                                         const MCSubtargetInfo &STI) const {
   return getOpValue(MI, OpNo, Fixups, STI, Colossus::fixup_colossus_19_s2);
 }
 
-
-unsigned ColossusMCCodeEmitter::
-getRunOpValue(const MCInst &MI, unsigned OpNo,
-              SmallVectorImpl<MCFixup> &Fixups,
-              const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getRunOpValue(const MCInst &MI, unsigned OpNo,
+                                     SmallVectorImpl<MCFixup> &Fixups,
+                                     const MCSubtargetInfo &STI) const {
   return getOpValue(MI, OpNo, Fixups, STI, Colossus::fixup_colossus_run);
 }
 
-unsigned ColossusMCCodeEmitter::
-getRel8OpValue(const MCInst &MI, unsigned OpNo,
-                SmallVectorImpl<MCFixup> &Fixups,
-                const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getRel8OpValue(const MCInst &MI, unsigned OpNo,
+                                      SmallVectorImpl<MCFixup> &Fixups,
+                                      const MCSubtargetInfo &STI) const {
   // Create a fixup for rpt instructions. This allows us to perform
   // Relaxations to align rpt bodies.
   if (ColossusMCInstrInfo::isRepeat(MI)) {
     //  Fixups require expressions. rpt operand
     auto expr = MCConstantExpr::create(0, Ctx);
-    MCFixupKind FU = (MCFixupKind) Colossus::fixup_colossus_rpt;
+    MCFixupKind FU = (MCFixupKind)Colossus::fixup_colossus_rpt;
     Fixups.push_back(MCFixup::create(4, expr, FU));
   }
   return getOpValue(MI, OpNo, Fixups, STI, Colossus::fixup_colossus_8);
 }
 
-unsigned ColossusMCCodeEmitter::
-getRel16OpValue(const MCInst &MI, unsigned OpNo,
-                SmallVectorImpl<MCFixup> &Fixups,
-                const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getRel16OpValue(const MCInst &MI, unsigned OpNo,
+                                       SmallVectorImpl<MCFixup> &Fixups,
+                                       const MCSubtargetInfo &STI) const {
   return getOpValue(MI, OpNo, Fixups, STI, Colossus::fixup_colossus_16);
 }
 
-unsigned ColossusMCCodeEmitter::
-getRel20OpValue(const MCInst &MI, unsigned OpNo,
-                SmallVectorImpl<MCFixup> &Fixups,
-                const MCSubtargetInfo &STI) const {
+unsigned
+ColossusMCCodeEmitter::getRel20OpValue(const MCInst &MI, unsigned OpNo,
+                                       SmallVectorImpl<MCFixup> &Fixups,
+                                       const MCSubtargetInfo &STI) const {
   return getOpValue(MI, OpNo, Fixups, STI, Colossus::fixup_colossus_20);
 }
 
@@ -322,11 +316,11 @@ unsigned getImmIZValue(const MCInst &MI, unsigned OpNo,
   assert(MO.isImm() && "did not expect relocated expression");
   return static_cast<unsigned>(MO.getImm() >> (32 - N));
 }
-}
+} // namespace
 
 static unsigned getImm12IZValue(const MCInst &MI, unsigned OpNo,
-                           SmallVectorImpl<MCFixup> &Fixups,
-                           const MCSubtargetInfo &STI) {
+                                SmallVectorImpl<MCFixup> &Fixups,
+                                const MCSubtargetInfo &STI) {
   return getImmIZValue<12>(MI, OpNo, Fixups, STI);
 }
 

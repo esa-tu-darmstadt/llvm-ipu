@@ -114,7 +114,7 @@ bool ColossusLibmCalls::run() {
 
     std::string local = name.str();
     for (auto &i : tab) {
-      if (name.startswith(i.first)) {
+      if (name.starts_with(i.first)) {
         if (Ty == i.second) {
           // prefix matches type, canonicalise to scalar f32 name
           local = local.substr(i.first.size()) + "f";

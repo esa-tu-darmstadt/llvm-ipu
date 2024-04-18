@@ -51,30 +51,22 @@ bool ColossusAsmParser::ParseDirective(AsmToken DirectiveID) {
 
   if (IDVal == ".warn_on_invalid_bundles") {
     AllowInvalidBundles = true;
-  } 
-  else if (IDVal == ".error_on_invalid_bundles") {
+  } else if (IDVal == ".error_on_invalid_bundles") {
     AllowInvalidBundles = false;
-  }
-  else if (IDVal == ".allow_invalid_operands") {
+  } else if (IDVal == ".allow_invalid_operands") {
     AllowInvalidOperands = true;
-  }
-  else if (IDVal == ".error_on_invalid_operands") {
+  } else if (IDVal == ".error_on_invalid_operands") {
     AllowInvalidOperands = false;
-  }
-  else if (IDVal == ".allow_invalid_execution_mode") {
+  } else if (IDVal == ".allow_invalid_execution_mode") {
     AllowInvalidExecutionMode = true;
-  }
-  else if (IDVal == ".error_on_invalid_execution_mode") {
+  } else if (IDVal == ".error_on_invalid_execution_mode") {
     AllowInvalidExecutionMode = false;
-  }
-  else if (IDVal == ".allow_invalid_repeat") {
+  } else if (IDVal == ".allow_invalid_repeat") {
     getParser().getStreamer().emitAssemblerFlag(MCAF_AllowInvalidRepeat);
-  }
-  else if (IDVal == ".allow_optimizations") {
+  } else if (IDVal == ".allow_optimizations") {
     AllowOptimzations = true;
     getParser().getStreamer().emitAssemblerFlag(MCAF_AllowOptimizations);
-  }
-  else if (IDVal == ".half") {
+  } else if (IDVal == ".half") {
     std::unique_ptr<ColossusOperand> Op;
     if (!parseSingleOperand(Op) && Op.get() && Op->isImm()) {
       getParser().getStreamer().emitValue(Op->getImm(), 2);
@@ -82,24 +74,21 @@ bool ColossusAsmParser::ParseDirective(AsmToken DirectiveID) {
       Error(getLoc(), "invalid .half operand");
       return true;
     }
-  }
-  else if (IDVal == ".supervisor") {
+  } else if (IDVal == ".supervisor") {
     if (!isSupervisor())
       switchMode();
-  }
-  else if (IDVal == ".worker") {
+  } else if (IDVal == ".worker") {
     if (isSupervisor())
       switchMode();
-  }
-  else {
+  } else {
     return true;
   }
 
   return false;
 }
 
-static unsigned MatchRegisterName(StringRef Name);
-static unsigned MatchRegisterAltName(StringRef Name);
+static MCRegister MatchRegisterName(StringRef Name);
+static MCRegister MatchRegisterAltName(StringRef Name);
 
 bool ColossusAsmParser::tryParseRegister(Register &Reg, bool allowPostinc) {
   Reg.StartLoc = Parser.getTok().getLoc();
@@ -112,7 +101,7 @@ bool ColossusAsmParser::tryParseRegister(Register &Reg, bool allowPostinc) {
     return true;
 
   std::string RegName = "$";
-  RegName +=  Parser.getLexer().peekTok().getString();
+  RegName += Parser.getLexer().peekTok().getString();
   unsigned RegNum = MatchRegisterName(RegName);
 
   // The post modified operand syntax is more difficult to parse than other
@@ -257,9 +246,10 @@ bool ColossusAsmParser::tryParseCSR(const MCExpr *&Expr) {
 
   if (!Info.AvailableInCurrentMode(isSupervisor()) &&
       !AllowInvalidExecutionMode)
-    return Error(Parser.getTok().getLoc(), "The CSR " + RegName + " cannot be" +
-                 " used in " + std::string(isSupervisor() ? "Supervisor" : 
-                 "Worker") + " mode.");
+    return Error(Parser.getTok().getLoc(),
+                 "The CSR " + RegName + " cannot be" + " used in " +
+                     std::string(isSupervisor() ? "Supervisor" : "Worker") +
+                     " mode.");
 
   Expr = MCConstantExpr::create(*RegNum, getContext());
 
@@ -268,7 +258,7 @@ bool ColossusAsmParser::tryParseCSR(const MCExpr *&Expr) {
   return false;
 }
 
-std::string ColossusAsmParser::getArchString(){
+std::string ColossusAsmParser::getArchString() {
   // Note this STI is not an instance of ColossusSubtarget but actually
   // ColossusGenMCSubtargetInfo.
   FeatureBitset FB = getSTI().getFeatureBits();
@@ -276,11 +266,13 @@ std::string ColossusAsmParser::getArchString(){
   if (FB[Colossus::ModeArchIpu21])
     return "ipu21";
   if (FB[Colossus::ModeArchIpu2])
-      return "ipu2";
+    return "ipu2";
   return "ipu1";
 }
 
-ParseStatus ColossusAsmParser::tryParseRegister(MCRegister &MCReg, SMLoc &StartLoc, SMLoc &EndLoc) {
+ParseStatus ColossusAsmParser::tryParseRegister(MCRegister &MCReg,
+                                                SMLoc &StartLoc,
+                                                SMLoc &EndLoc) {
   Register Reg;
   if (tryParseRegister(Reg))
     return ParseStatus::Failure;
@@ -354,15 +346,15 @@ bool ColossusAsmParser::ParseFloat16(bool Negate, uint16_t &Value) {
   return false;
 }
 
-bool ColossusAsmParser::
-parseSingleOperand(std::unique_ptr<ColossusOperand> &Op) {
+bool ColossusAsmParser::parseSingleOperand(
+    std::unique_ptr<ColossusOperand> &Op) {
   bool Negate = false;
 
   // For negative real values, we need to look-ahead and consume the sign.
   if (getLexer().getKind() == AsmToken::Minus) {
     auto NextTok = getLexer().peekTok();
-    if (NextTok.is(AsmToken::Real) || (NextTok.is(AsmToken::Identifier) &&
-                                       NextTok.getString() == "infh")) {
+    if (NextTok.is(AsmToken::Real) ||
+        (NextTok.is(AsmToken::Identifier) && NextTok.getString() == "infh")) {
       Negate = true;
       Lex();
     }
@@ -376,7 +368,7 @@ parseSingleOperand(std::unique_ptr<ColossusOperand> &Op) {
     Kind = getLexer().getKind();
   }
 
-  switch(Kind) {
+  switch (Kind) {
   default:
     return Error(getLoc(), "invalid operand");
 
@@ -387,7 +379,7 @@ parseSingleOperand(std::unique_ptr<ColossusOperand> &Op) {
       auto Value = MCConstantExpr::create(Float16, getContext());
 
       SMLoc EndLoc =
-        SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
+          SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
 
       Op = ColossusOperand::createImm(Value, StartLoc, EndLoc);
       return false;
@@ -405,16 +397,19 @@ parseSingleOperand(std::unique_ptr<ColossusOperand> &Op) {
     LLVM_FALLTHROUGH;
   }
   // Fall-through - identifiers can start with a $
-  case AsmToken::LParen: LLVM_FALLTHROUGH;
-  case AsmToken::Identifier: LLVM_FALLTHROUGH;
-  case AsmToken::Minus: LLVM_FALLTHROUGH;
+  case AsmToken::LParen:
+    LLVM_FALLTHROUGH;
+  case AsmToken::Identifier:
+    LLVM_FALLTHROUGH;
+  case AsmToken::Minus:
+    LLVM_FALLTHROUGH;
   case AsmToken::Integer: {
     SMLoc StartLoc = getLoc();
     const MCExpr *Expr;
     if (getParser().parseExpression(Expr))
       return true;
     SMLoc EndLoc =
-      SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
+        SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
     Op = ColossusOperand::createImm(Expr, StartLoc, EndLoc);
     return false;
   }
@@ -440,8 +435,7 @@ bool ColossusAsmParser::parseOperand(OperandVector &Operands,
   return false;
 }
 
-ParseStatus
-ColossusAsmParser::parseImmAddressOperand(OperandVector &Operands) {
+ParseStatus ColossusAsmParser::parseImmAddressOperand(OperandVector &Operands) {
   SMLoc StartLoc = getLoc();
   // Register operands are invalid.
   Register Reg;
@@ -460,18 +454,16 @@ ColossusAsmParser::parseImmAddressOperand(OperandVector &Operands) {
   return ParseStatus::NoMatch;
 }
 
-unsigned ColossusAsmParser::ParseOperandBroadcast(StringRef token)
-{
+unsigned ColossusAsmParser::ParseOperandBroadcast(StringRef token) {
   // Derived from TileOpBCast in the ArchMan.
   return StringSwitch<unsigned>(token.str())
-           .Case("B", COLOSSUS_TOP_BCAST_F32)
-           .Case("BL", COLOSSUS_TOP_BCAST_F16L)
-           .Case("BU", COLOSSUS_TOP_BCAST_F16U)
-           .Default(0);
+      .Case("B", COLOSSUS_TOP_BCAST_F32)
+      .Case("BL", COLOSSUS_TOP_BCAST_F16L)
+      .Case("BU", COLOSSUS_TOP_BCAST_F16U)
+      .Default(0);
 }
 
-ParseStatus
-ColossusAsmParser::parseBroadcastOperand(OperandVector &Operands) {
+ParseStatus ColossusAsmParser::parseBroadcastOperand(OperandVector &Operands) {
   SMLoc StartLoc = getLoc();
 
   if (Parser.getTok().isNot(AsmToken::Dollar))
@@ -482,7 +474,7 @@ ColossusAsmParser::parseBroadcastOperand(OperandVector &Operands) {
     return ParseStatus::NoMatch;
 
   std::string RegName = "$";
-  RegName +=  Parser.getLexer().peekTok().getString();
+  RegName += Parser.getLexer().peekTok().getString();
 
   unsigned RegNum = MatchRegisterName(RegName);
   if (RegNum == 0)
@@ -492,7 +484,7 @@ ColossusAsmParser::parseBroadcastOperand(OperandVector &Operands) {
   size_t ReadCount = Parser.getLexer().peekTokens(Tokens);
 
   if (ReadCount != sizeof(Tokens) / sizeof(Tokens[0]))
-      return ParseStatus::NoMatch;
+    return ParseStatus::NoMatch;
 
   if (Tokens[1].isNot(AsmToken::Colon))
     return ParseStatus::NoMatch;
@@ -503,20 +495,19 @@ ColossusAsmParser::parseBroadcastOperand(OperandVector &Operands) {
     Parser.Lex();
     Parser.Lex();
     Parser.Lex();
-    SMLoc EndLoc = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer()
-                                         - 1);
+    SMLoc EndLoc =
+        SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
 
-    Operands.push_back(ColossusOperand::createBroadcast(RegNum, StartLoc,
-                                                        EndLoc, Broadcast));
+    Operands.push_back(
+        ColossusOperand::createBroadcast(RegNum, StartLoc, EndLoc, Broadcast));
     return ParseStatus::Success;
   }
 
   return ParseStatus::NoMatch;
 }
 
-template<int vecSize>
-ParseStatus
-ColossusAsmParser::parseACCOperand(OperandVector &Operands) {
+template <int vecSize>
+ParseStatus ColossusAsmParser::parseACCOperand(OperandVector &Operands) {
   unsigned RegNum;
   SMLoc StartLoc = getLoc();
   auto &Token = Parser.getTok();
@@ -532,15 +523,13 @@ ColossusAsmParser::parseACCOperand(OperandVector &Operands) {
     return ParseStatus::NoMatch;
   }
   Lex();
-  SMLoc EndLoc =
-      SMLoc::getFromPointer(Token.getLoc().getPointer() - 1);
-  Operands.push_back(ColossusOperand::createReg(RC->getRegister(RegNum),
-                                                StartLoc, EndLoc));
+  SMLoc EndLoc = SMLoc::getFromPointer(Token.getLoc().getPointer() - 1);
+  Operands.push_back(
+      ColossusOperand::createReg(RC->getRegister(RegNum), StartLoc, EndLoc));
   return ParseStatus::Success;
 }
 
-ParseStatus
-ColossusAsmParser::parseMEM2Operand(OperandVector &Operands) {
+ParseStatus ColossusAsmParser::parseMEM2Operand(OperandVector &Operands) {
   SMLoc S, E;
   MCRegister BaseReg = 0;
   MCRegister OffReg = 0;
@@ -567,8 +556,7 @@ ColossusAsmParser::parseMEM2Operand(OperandVector &Operands) {
   return ParseStatus::Success;
 }
 
-ParseStatus
-ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
+ParseStatus ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
   SMLoc S, E;
   Register Reg1, Reg2;
   MCRegister BaseReg = 0;
@@ -641,23 +629,23 @@ ColossusAsmParser::parseMEM3Operand(OperandVector &Operands) {
       return ParseStatus::NoMatch;
     }
 
-    Operands.push_back(ColossusOperand::createMEMrri(BaseReg, Reg1.Num,
-                                                     Expr, S, E));
+    Operands.push_back(
+        ColossusOperand::createMEMrri(BaseReg, Reg1.Num, Expr, S, E));
     return ParseStatus::Success;
   }
 
   // MEMrrr
   E = Reg2.EndLoc;
-  Operands.push_back(ColossusOperand::createMEMrrr(BaseReg, Reg1.Num,
-                                                   Reg2.Num, S, E));
+  Operands.push_back(
+      ColossusOperand::createMEMrrr(BaseReg, Reg1.Num, Reg2.Num, S, E));
   return ParseStatus::Success;
 }
 
 std::optional<bool> ColossusAsmParser::ExpandMacroLdconst(MCInst &Inst,
-                                                           SMLoc IDLoc,
-                                                           MCStreamer &Out,
-                                                           unsigned SetziOpcode,
-                                                           unsigned OrOpcode) {
+                                                          SMLoc IDLoc,
+                                                          MCStreamer &Out,
+                                                          unsigned SetziOpcode,
+                                                          unsigned OrOpcode) {
   const unsigned SetziMask = 0xfffff;
   const unsigned OrMask = ~SetziMask;
   auto &DestReg = Inst.getOperand(0);
@@ -682,7 +670,7 @@ std::optional<bool> ColossusAsmParser::ExpandMacroLdconst(MCInst &Inst,
   Inst.setLoc(IDLoc);
   Inst.addOperand(DestReg);
   Inst.addOperand(MCOperand::createImm(Imm & SetziMask));
-  Inst.addOperand(MCOperand::createImm(0));  /* coissue. */
+  Inst.addOperand(MCOperand::createImm(0)); /* coissue. */
   Out.emitInstruction(Inst, STI);
 
   // If the constant is > 20 bits, emit an
@@ -701,8 +689,8 @@ std::optional<bool> ColossusAsmParser::ExpandMacroLdconst(MCInst &Inst,
 }
 
 std::optional<bool> ColossusAsmParser::ExpandMacroSubImm(MCInst &Inst,
-                                                          SMLoc IDLoc,
-                                                          MCStreamer &Out) {
+                                                         SMLoc IDLoc,
+                                                         MCStreamer &Out) {
   auto &DestReg = Inst.getOperand(0);
   auto &SrcReg = Inst.getOperand(1);
 
@@ -728,9 +716,9 @@ std::optional<bool> ColossusAsmParser::ExpandMacroSubImm(MCInst &Inst,
   return EmitInstruction(Inst, Out, IDLoc);
 }
 
-std::optional<bool>
-ColossusAsmParser::ExpandMacroInstruction(MCInst &Inst, SMLoc IDLoc,
-                                          MCStreamer &Out) {
+std::optional<bool> ColossusAsmParser::ExpandMacroInstruction(MCInst &Inst,
+                                                              SMLoc IDLoc,
+                                                              MCStreamer &Out) {
   switch (Inst.getOpcode()) {
   case Colossus::SUB_IMM:
     return ExpandMacroSubImm(Inst, IDLoc, Out);
@@ -804,18 +792,15 @@ void ColossusOperand::print(raw_ostream &OS) const {
     OS << "Imm: " << getImm();
     return;
   case KindMemoryReg:
-    OS << "Memory: " << getMemBase()
-       << ", " << getMemOffsetReg();
+    OS << "Memory: " << getMemBase() << ", " << getMemOffsetReg();
     return;
   case KindMemoryRegReg:
-    OS << "Memory: " << getMemBase()
-       << ", " << getMemDelta()
-       << ", " << getMemOffsetReg();
+    OS << "Memory: " << getMemBase() << ", " << getMemDelta() << ", "
+       << getMemOffsetReg();
     return;
   case KindMemoryRegImm:
-    OS << "Memory: " << getMemBase()
-       << ", " << getMemDelta()
-       << ", " << getMemOffsetImm();
+    OS << "Memory: " << getMemBase() << ", " << getMemDelta() << ", "
+       << getMemOffsetImm();
     return;
   }
   llvm_unreachable("Unrecognised operand kind");
@@ -833,7 +818,7 @@ void ColossusAsmParser::emitInstructionBundle(MCStreamer &Out) {
   // Will be processed (See T1517 for more info).
   for (unsigned i = InstructionBundle.getNumOperands(); i--;) {
     assert(InstructionBundle.getOperand(i).isInst() &&
-      "Expect operand of a bundle to be an MCInst");
+           "Expect operand of a bundle to be an MCInst");
     Out.MCStreamer::emitInstruction(*InstructionBundle.getOperand(i).getInst(),
                                     STI);
   }
@@ -857,9 +842,11 @@ bool ColossusAsmParser::ValidateOperands(OperandVector &Operands,
 
       if (NeedsPostInc != HasPostInc) {
         if (HasPostInc == ColossusMCInstrInfo::OperandNoPostInc) {
-          Parser.printError(Op.getStartLoc(), "missing operand post-inc suffix");
+          Parser.printError(Op.getStartLoc(),
+                            "missing operand post-inc suffix");
         } else {
-          Parser.printError(Op.getStartLoc(), "invalid operand post-inc suffix");
+          Parser.printError(Op.getStartLoc(),
+                            "invalid operand post-inc suffix");
         }
       }
     }
@@ -933,8 +920,8 @@ bool ColossusAsmParser::ValidateBundle(SMLoc L) {
 
     for (unsigned Insn1Op = 0; Insn1Op < Insn1NumOps; Insn1Op++) {
       auto &Insn1OutOp = Insn1.getOperand(Insn1Op);
-      if (OperandsClash(getContext().getRegisterInfo(),
-                        Insn0OutOp, Insn1OutOp)) {
+      if (OperandsClash(getContext().getRegisterInfo(), Insn0OutOp,
+                        Insn1OutOp)) {
         InvalidBundle = true;
         Warnings.push_back("bundle instructions cannot write to the same "
                            "operand");
@@ -954,17 +941,16 @@ bool ColossusAsmParser::ValidateBundle(SMLoc L) {
   return AllowInvalidBundles ? false : InvalidBundle;
 }
 
-void ColossusAsmParser::SwapBundleInstructionsIfRequired () {
-  if (   !AllowOptimzations
-      || InstructionBundle.getNumOperands() != MAX_NUM_INSTRUCTIONS_IN_BUNDLE)
+void ColossusAsmParser::SwapBundleInstructionsIfRequired() {
+  if (!AllowOptimzations ||
+      InstructionBundle.getNumOperands() != MAX_NUM_INSTRUCTIONS_IN_BUNDLE)
     return;
 
   const auto &Insn0 = *InstructionBundle.getOperand(0).getInst();
   const auto &Insn1 = *InstructionBundle.getOperand(1).getInst();
 
-
-    if ( ColossusMCInstrInfo::getLane(MII, Insn0) == 1
-      && ColossusMCInstrInfo::getLane(MII, Insn1) == 0) {
+  if (ColossusMCInstrInfo::getLane(MII, Insn0) == 1 &&
+      ColossusMCInstrInfo::getLane(MII, Insn1) == 0) {
     MCOperand aux = InstructionBundle.getOperand(0);
     InstructionBundle.getOperand(0) = InstructionBundle.getOperand(1);
     InstructionBundle.getOperand(1) = aux;
@@ -989,12 +975,11 @@ bool ColossusAsmParser::EmitInstruction(MCInst &Inst, MCStreamer &Out,
   return false;
 }
 
-bool ColossusAsmParser::
-MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
-                        OperandVector &Operands,
-                        MCStreamer &Out,
-                        uint64_t &ErrorInfo,
-                        bool MatchingInlineAsm) {
+bool ColossusAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+                                                OperandVector &Operands,
+                                                MCStreamer &Out,
+                                                uint64_t &ErrorInfo,
+                                                bool MatchingInlineAsm) {
   MCInst Inst;
   unsigned MatchResult;
   FeatureBitset MissingFeatures;
@@ -1012,15 +997,15 @@ MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   }
   if (AllowInvalidExecutionMode && MatchResult == Match_MissingFeature) {
     switchMode();
-    MatchResult = MatchInstructionImpl(Operands, Inst, ErrorInfo, MissingFeatures,
-                                       MatchingInlineAsm);
+    MatchResult = MatchInstructionImpl(Operands, Inst, ErrorInfo,
+                                       MissingFeatures, MatchingInlineAsm);
     switchMode();
   }
 
   switch (MatchResult) {
-  default: break;
-  case Match_Success:
-  {
+  default:
+    break;
+  case Match_Success: {
     auto Expanded = ExpandMacroInstruction(Inst, IDLoc, Out);
     if (Expanded.has_value()) {
       return Expanded.value();
@@ -1073,8 +1058,9 @@ void ColossusAsmParser::onStatementPrefix(AsmToken Token) {
   if (Token.is(AsmToken::LCurly)) {
     HandledTok = true;
 
-    if (InBundle){
-      Parser.printError(Token.getLoc(), "start of instruction bundle without end");
+    if (InBundle) {
+      Parser.printError(Token.getLoc(),
+                        "start of instruction bundle without end");
     }
 
     InBundle = true;
@@ -1103,15 +1089,16 @@ void ColossusAsmParser::onStatementPrefix(AsmToken Token) {
   }
 }
 
-  bool ColossusAsmParser::isSupervisor() {
-    return getSTI().getFeatureBits()[Colossus::ModeSupervisor];
-  }
+bool ColossusAsmParser::isSupervisor() {
+  return getSTI().getFeatureBits()[Colossus::ModeSupervisor];
+}
 
-  void ColossusAsmParser::switchMode() {
-    MCSubtargetInfo &STI = copySTI();
-    auto FB = ComputeAvailableFeatures(STI.ToggleFeature(Colossus::ModeSupervisor));
-    setAvailableFeatures(FB);
-  }
+void ColossusAsmParser::switchMode() {
+  MCSubtargetInfo &STI = copySTI();
+  auto FB =
+      ComputeAvailableFeatures(STI.ToggleFeature(Colossus::ModeSupervisor));
+  setAvailableFeatures(FB);
+}
 
 ColossusAsmParser::~ColossusAsmParser() {
   if (InBundle)

@@ -33,7 +33,6 @@
 #include "ColossusRegisterInfo.h"
 #include "MCTargetDesc/ColossusMCFixups.h"
 #include "MCTargetDesc/ColossusMCInstrInfo.h"
-#include "llvm/TargetParser/Triple.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmLayout.h"
@@ -50,47 +49,40 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/TargetParser/Triple.h"
 
 using namespace llvm;
 
 namespace {
-unsigned adjustFixupValue(unsigned Kind, uint64_t Value,
-                                 bool IsResolved) {
+unsigned adjustFixupValue(unsigned Kind, uint64_t Value, bool IsResolved) {
   switch (Kind) {
   default:
     llvm_unreachable("Unknown fixup kind!");
   case FK_Data_1:
   case FK_Data_2:
   case FK_Data_4:
-  case FK_Data_8:
-    {
-      return Value;
-    }
-  case Colossus::fixup_colossus_8:
-    {
-      return Value & 0xff;
-    }
-  case Colossus::fixup_colossus_16:
-    {
-      return Value & 0xffff;
-    }
-  case Colossus::fixup_colossus_20:
-    {
-      return Value & 0xfffff;
-    }
-  case Colossus::fixup_colossus_19_s2:
-    {
-      return (Value >> 2) & 0x7ffff;
-    }
-  case Colossus::fixup_colossus_run:
-    {
-      assert(!IsResolved && "run fixup has been resolved");
-      return 0;
-    }
-  case Colossus::fixup_colossus_18_s2:
-    {
-      return (Value >> 2) & 0x3ffff;
-    }
+  case FK_Data_8: {
+    return Value;
+  }
+  case Colossus::fixup_colossus_8: {
+    return Value & 0xff;
+  }
+  case Colossus::fixup_colossus_16: {
+    return Value & 0xffff;
+  }
+  case Colossus::fixup_colossus_20: {
+    return Value & 0xfffff;
+  }
+  case Colossus::fixup_colossus_19_s2: {
+    return (Value >> 2) & 0x7ffff;
+  }
+  case Colossus::fixup_colossus_run: {
+    assert(!IsResolved && "run fixup has been resolved");
+    return 0;
+  }
+  case Colossus::fixup_colossus_18_s2: {
+    return (Value >> 2) & 0x3ffff;
+  }
   }
 }
 
@@ -121,13 +113,11 @@ class ColossusMCAsmBackend : public MCAsmBackend {
 
 public:
   ColossusMCAsmBackend(const Target &T)
-      : MCAsmBackend(support::endianness::little)
-      , MII(T.createMCInstrInfo())
-      , AllowInvalidRepeat(false)
-      , AllowOptimizations(false) {
-  }
+      : MCAsmBackend(endianness::little), MII(T.createMCInstrInfo()),
+        AllowInvalidRepeat(false), AllowOptimizations(false) {}
 
-   std::unique_ptr<MCObjectTargetWriter> createObjectTargetWriter() const override {
+  std::unique_ptr<MCObjectTargetWriter>
+  createObjectTargetWriter() const override {
     return createColossusMCObjectWriter();
   }
 
@@ -137,23 +127,23 @@ public:
 
   const MCFixupKindInfo &getFixupKindInfo(MCFixupKind Kind) const override {
     const static MCFixupKindInfo Infos[Colossus::NumTargetFixupKinds] = {
-      // This table *must* be in the order that the fixup_* kinds are defined in
-      // ColossusMCFixups.h.
-      //
-      // Name                           Offset (bits) Size (bits)     Flags
-      { "fixup_colossus_8",             0,             8,             0 },
-      { "fixup_colossus_16",            0,            16,             0 },
-      { "fixup_colossus_20",            0,            20,             0 },
-      { "fixup_colossus_21",            0,            21,             0 },
-      { "fixup_colossus_18_s2",         0,            18,             0 },
-      { "fixup_colossus_19_s2",         0,            19,             0 },
-      // run: 16-bits split into 2 chunks, bits 0-11, then 16-19
-      { "fixup_colossus_run",           0,            16,             0 },
-      { "fixup_colossus_rpt",           0,             0,             0 },
-      { "fixup_colossus_control",       0,             0,             0 },
-      { "fixup_colossus_system",        0,             0,             0 },
-      { "fixup_colossus_single",        0,             0,             0 }
-    };
+        // This table *must* be in the order that the fixup_* kinds are defined
+        // in
+        // ColossusMCFixups.h.
+        //
+        // Name                           Offset (bits) Size (bits)     Flags
+        {"fixup_colossus_8", 0, 8, 0},
+        {"fixup_colossus_16", 0, 16, 0},
+        {"fixup_colossus_20", 0, 20, 0},
+        {"fixup_colossus_21", 0, 21, 0},
+        {"fixup_colossus_18_s2", 0, 18, 0},
+        {"fixup_colossus_19_s2", 0, 19, 0},
+        // run: 16-bits split into 2 chunks, bits 0-11, then 16-19
+        {"fixup_colossus_run", 0, 16, 0},
+        {"fixup_colossus_rpt", 0, 0, 0},
+        {"fixup_colossus_control", 0, 0, 0},
+        {"fixup_colossus_system", 0, 0, 0},
+        {"fixup_colossus_single", 0, 0, 0}};
 
     if (Kind < FirstTargetFixupKind)
       return MCAsmBackend::getFixupKindInfo(Kind);
@@ -163,15 +153,17 @@ public:
     return Infos[Kind - FirstTargetFixupKind];
   }
 
-  bool shouldForceRelocation(const MCAssembler &,
-                             const MCFixup &Fixup,
-                             const MCValue &) override {
+  bool shouldForceRelocation(const MCAssembler &, const MCFixup &Fixup,
+                             const MCValue &,
+                             const MCSubtargetInfo *) override {
     unsigned Kind = Fixup.getKind();
     switch (Kind) {
-    default: return false;
+    default:
+      return false;
     // Fixup is relative to the base of memory - leave it for the linker to
     // resolve since the linker knows the memory layout.
-    case Colossus::fixup_colossus_run: return true;
+    case Colossus::fixup_colossus_run:
+      return true;
     }
   }
 
@@ -220,19 +212,17 @@ void ColossusMCAsmBackend::handleAssemblerFlag(MCAssemblerFlag Flag) {
 }
 
 void ColossusMCAsmBackend::applyFixup(const MCAssembler &Asm,
-                                      const MCFixup &Fixup,
-                                      const MCValue &,
+                                      const MCFixup &Fixup, const MCValue &,
                                       MutableArrayRef<char> Data,
-                                      uint64_t Value,
-                                      bool IsResolved,
-                                      const MCSubtargetInfo */*STI*/) const {
+                                      uint64_t Value, bool IsResolved,
+                                      const MCSubtargetInfo * /*STI*/) const {
   MCFixupKind Kind = Fixup.getKind();
   const MCFixupKindInfo &Info = getFixupKindInfo(Kind);
 
-  if (Kind == (unsigned)Colossus::fixup_colossus_rpt
-    || Kind == (unsigned)Colossus::fixup_colossus_control
-    || Kind == (unsigned)Colossus::fixup_colossus_system
-    || Kind == (unsigned)Colossus::fixup_colossus_single) {
+  if (Kind == (unsigned)Colossus::fixup_colossus_rpt ||
+      Kind == (unsigned)Colossus::fixup_colossus_control ||
+      Kind == (unsigned)Colossus::fixup_colossus_system ||
+      Kind == (unsigned)Colossus::fixup_colossus_single) {
     return;
   }
 
@@ -253,7 +243,7 @@ void ColossusMCAsmBackend::applyFixup(const MCAssembler &Asm,
 }
 
 bool ColossusMCAsmBackend::mayNeedRelaxation(const MCInst &Inst,
-    const MCSubtargetInfo &STI) const {
+                                             const MCSubtargetInfo &STI) const {
   auto Opcode = Inst.getOpcode();
   if (Opcode != TargetOpcode::BUNDLE) {
     return false;
@@ -261,9 +251,8 @@ bool ColossusMCAsmBackend::mayNeedRelaxation(const MCInst &Inst,
 
   auto SecondInst = Inst.getOperand(1).getInst();
 
-  return AllowOptimizations
-      && ColossusMCInstrInfo::isRepeat(Inst)
-      && ColossusMCInstrInfo::isFnop(STI, *SecondInst);
+  return AllowOptimizations && ColossusMCInstrInfo::isRepeat(Inst) &&
+         ColossusMCInstrInfo::isFnop(STI, *SecondInst);
 }
 
 // mayNeedRelaxation already called see MCAssembler::fragmentNeedsRelaxation
@@ -347,17 +336,15 @@ void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
         // Following contents is in a rpt body
         if (RptBodySize) {
           auto &DF = cast<MCDataFragment>(Fragment);
-          validateRptBody(RptBodySize,
-                          DF.getFixups(), Context);
+          validateRptBody(RptBodySize, DF.getFixups(), Context);
           auto Size = DF.getContents().size();
           Size > RptBodySize ? RptBodySize = 0 : RptBodySize -= Size;
         }
-      }
-      break;
+      } break;
       // rpt instruction
       case MCFragment::FT_Relaxable: {
         if (AllowOptimizations) {
-             Section->setAlignment(Align(8));
+          Section->setAlignment(Align(8));
         }
 
         auto &RF = cast<MCRelaxableFragment>(Fragment);
@@ -368,16 +355,18 @@ void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
           auto nextOffset = Layout.getFragmentOffset(&Fragment) +
                             (Opcode == TargetOpcode::BUNDLE ? 8 : 4);
           if (Section->getAlign() < 8 || (nextOffset & 7) != 0) {
-            char const * message = Opcode == TargetOpcode::BUNDLE ?
-                "code following rpt instruction is misaligned. Please add a "
-                "nop before the bundled rpt instruction to ensure the rpt "
-                "body is 8 byte aligned"
-              : "code following rpt instruction is misaligned. Please bundle "
-                "the rpt instruction with fnop to ensure the rpt body is 8 "
-                "byte aligned";
-            Context.reportError(
-                RF.getInst().getLoc(),
-                message);
+            char const *message = Opcode == TargetOpcode::BUNDLE
+                                      ? "code following rpt instruction is "
+                                        "misaligned. Please add a "
+                                        "nop before the bundled rpt "
+                                        "instruction to ensure the rpt "
+                                        "body is 8 byte aligned"
+                                      : "code following rpt instruction is "
+                                        "misaligned. Please bundle "
+                                        "the rpt instruction with fnop to "
+                                        "ensure the rpt body is 8 "
+                                        "byte aligned";
+            Context.reportError(RF.getInst().getLoc(), message);
           } else {
             if (Opcode == TargetOpcode::BUNDLE) {
               Inst = Inst->getOperand(0).getInst();
@@ -391,8 +380,8 @@ void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
   }
 }
 
-bool ColossusMCAsmBackend::writeNopData(raw_ostream &OS,
-                           uint64_t Count, const MCSubtargetInfo *STI) const {
+bool ColossusMCAsmBackend::writeNopData(raw_ostream &OS, uint64_t Count,
+                                        const MCSubtargetInfo *STI) const {
   // If the count is not 4-byte aligned, we must be writing data into the text
   // section (otherwise we have unaligned instructions, and thus have far
   // bigger problems), so just write zeros instead.

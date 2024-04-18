@@ -188,7 +188,7 @@ bool ColossusIntrinsicCalls::run() {
       auto name = Callee->getName();
 
       const char *prefix = "ipu_";
-      if (!name.startswith(prefix)) {
+      if (!name.starts_with(prefix)) {
         continue;
       }
       name = name.slice(strlen(prefix), StringRef::npos);
@@ -249,7 +249,7 @@ bool ColossusIntrinsicCalls::run() {
       // void (*ipu_T_store_postinc)(T** %a, T %v, i32 %i)
       //   =>
       // T* (*colossus_ststep) (T %v, T* %a, i32 %i)
-      if (arity == 3 && name.endswith(storeSuffix)) {
+      if (arity == 3 && name.ends_with(storeSuffix)) {
         name = name.slice(0, name.size() - strlen(storeSuffix));
         if (storeTypesOK(name)) {
           if (replaceStoreIntrinsic(CI, name)) {
@@ -268,7 +268,7 @@ bool ColossusIntrinsicCalls::run() {
       // T (*ipu_T_load_postinc)(T** %a, i32 %i)
       //   =>
       // {T, T*} (*colossus_ldstep)(T* %a, i32 %i)
-      if (arity == 2 && name.endswith(loadSuffix)) {
+      if (arity == 2 && name.ends_with(loadSuffix)) {
         name = name.slice(0, name.size() - strlen(loadSuffix));
         if (loadTypesOK(name)) {
           if (replaceLoadIntrinsic(CI, name)) {

@@ -40,6 +40,7 @@
 #include "ColossusTargetObjectFile.h"
 #include "ColossusTargetTransformInfo.h"
 #include "TargetInfo/ColossusTargetInfo.h"
+#include "llvm/CodeGen/AtomicExpand.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -48,7 +49,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/LoopDeletion.h"
-#include "llvm/Transforms/Vectorize.h"
+// #include "llvm/Transforms/Vectorize.h"
 
 using namespace llvm;
 
@@ -149,7 +150,7 @@ ColossusPassConfig::createMachineScheduler(MachineSchedContext *C) const {
 }
 
 void ColossusPassConfig::addIRPasses() {
-  addPass(createAtomicExpandPass());
+  addPass(createAtomicExpandLegacyPass());
   TargetPassConfig::addIRPasses();
 }
 
@@ -216,7 +217,8 @@ ColossusTargetMachine::getTargetTransformInfo(const Function &F) const {
   return TargetTransformInfo(ColossusTTIImpl(this, F));
 }
 
-void ColossusTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
+void ColossusTargetMachine::registerPassBuilderCallbacks(
+    PassBuilder &PB, bool PopulateClassToPassNames) {
   PB.registerScalarOptimizerLateEPCallback(
       [=](FunctionPassManager &FPM, OptimizationLevel Level) {
         FPM.addPass(ColossusIntrinsicCallsPass());

@@ -22594,7 +22594,7 @@ static Value *EmitColossusBuiltinExprWithImmCheck(CodeGenFunction &CGF,
       Args.push_back(CGF.EmitScalarExpr(E->getArg(i)));
   }
 
-  return Builder.CreateCall(F, makeArrayRef(Args));
+  return Builder.CreateCall(F, ArrayRef(Args));
 }
 
 Value *CodeGenFunction::EmitColossusBuiltinExpr(unsigned BuiltinID,

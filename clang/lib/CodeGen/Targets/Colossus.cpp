@@ -1,11 +1,11 @@
-//===- Colossus.cpp ------------------------------------------------------------===//
+//===- Colossus.cpp
+//------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-
 
 //===----------------------------------------------------------------------===//
 // Colossus ABI Implementation.
@@ -24,8 +24,7 @@ namespace {
 
 class ColossusABIInfo : public DefaultABIInfo {
 public:
-  ColossusABIInfo(CodeGen::CodeGenTypes &CGT) :
-    DefaultABIInfo(CGT) {}
+  ColossusABIInfo(CodeGen::CodeGenTypes &CGT) : DefaultABIInfo(CGT) {}
   Address EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
                     QualType Ty) const override;
 };
@@ -33,7 +32,7 @@ public:
 class ColossusTargetCodeGenInfo : public TargetCodeGenInfo {
 public:
   ColossusTargetCodeGenInfo(CodeGenTypes &CGT)
-    :TargetCodeGenInfo(std::make_unique<ColossusABIInfo>(CGT)) {}
+      : TargetCodeGenInfo(std::make_unique<ColossusABIInfo>(CGT)) {}
 
   void setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
                            CodeGen::CodeGenModule &CGM) const override {
@@ -99,7 +98,7 @@ public:
 
 } // End anonymous namespace.
 Address ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
-                                QualType Ty) const {
+                                   QualType Ty) const {
   CGBuilderTy &Builder = CGF.Builder;
 
   // Get the VAList.
@@ -120,6 +119,8 @@ Address ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
   switch (AI.getKind()) {
   case ABIArgInfo::Expand:
   case ABIArgInfo::InAlloca:
+  case ABIArgInfo::IndirectAliased:
+  case ABIArgInfo::CoerceAndExpand:
     llvm_unreachable("Unsupported ABI kind for va_arg");
   case ABIArgInfo::Ignore:
     Val = Address(llvm::UndefValue::get(ArgPtrTy), ArgPtrTy, TypeAlign);
@@ -129,7 +130,7 @@ Address ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
   case ABIArgInfo::Direct:
     Val = AP.withElementType(ArgTy);
     ArgSize = CharUnits::fromQuantity(
-                       getDataLayout().getTypeAllocSize(AI.getCoerceToType()));
+        getDataLayout().getTypeAllocSize(AI.getCoerceToType()));
     ArgSize = ArgSize.alignTo(SlotSize);
     break;
   case ABIArgInfo::Indirect: {
@@ -143,7 +144,7 @@ Address ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
   // Increment the VAList.
   if (!ArgSize.isZero()) {
     Address APN = Builder.CreateConstInBoundsByteGEP(AP, ArgSize);
-    Builder.CreateStore(APN.getPointer(), VAListAddr);
+    Builder.CreateStore(APN.getBasePointer(), VAListAddr);
   }
 
   return Val;

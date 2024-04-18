@@ -1469,16 +1469,6 @@ def F16TOF32 : inst_f16tof32_aaan {
   let Pattern = [(set f32AR:$op0, (any_fpextend f16AR:$op1))];
 }
 
-// fp_to_f16 and f16_to_fp are typed as float to int conversions.
-def strict_fp_to_f16  : SDNode<"ISD::STRICT_FP_TO_FP16" , SDTFPToIntOp, [SDNPHasChain]>;
-def strict_f16_to_fp  : SDNode<"ISD::STRICT_FP16_TO_FP" , SDTIntToFPOp, [SDNPHasChain]>;
-def any_fp_to_f16     : PatFrags<(ops node:$src),
-                                 [(strict_fp_to_f16 node:$src),
-                                  (fp_to_f16 node:$src)]>;
-def any_f16_to_fp     : PatFrags<(ops node:$src),
-                                 [(strict_f16_to_fp node:$src),
-                                  (f16_to_fp node:$src)]>;
-
 // fp_to_f16
 def f32_to_f16 : OutPatFrag<(ops node:$src), (f16 (F32TOF16 node:$src))>;
 def : Pat<(i32 (any_fp_to_f16 f32AR:$src)),

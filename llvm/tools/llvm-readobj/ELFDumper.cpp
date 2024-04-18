@@ -3574,7 +3574,7 @@ template <class ELFT> void GNUELFDumper<ELFT>::printFileHeaders() {
                           unsigned(ELF::EF_XTENSA_MACH));
   // IPU local patch begin
   else if (e.e_machine == EM_GRAPHCORE_IPU)
-    ElfFlags = printFlags(e.e_flags, makeArrayRef(ElfHeaderGraphcoreFlags),
+    ElfFlags = printFlags(e.e_flags, ArrayRef(ElfHeaderGraphcoreFlags),
                           unsigned(ELF::EF_GRAPHCORE_ARCH));
   // IPU local patch end
   else if (e.e_machine == EM_CUDA)
@@ -6959,7 +6959,7 @@ template <class ELFT> void LLVMELFDumper<ELFT>::printFileHeaders() {
                    unsigned(ELF::EF_XTENSA_MACH));
     // IPU local patch begin
     else if (E.e_machine == EM_GRAPHCORE_IPU)
-      W.printFlags("Flags", E.e_flags, makeArrayRef(ElfHeaderGraphcoreFlags),
+      W.printFlags("Flags", E.e_flags, ArrayRef(ElfHeaderGraphcoreFlags),
                    unsigned(ELF::EF_GRAPHCORE_ARCH));
     // IPU local patch end
     else if (E.e_machine == EM_CUDA)

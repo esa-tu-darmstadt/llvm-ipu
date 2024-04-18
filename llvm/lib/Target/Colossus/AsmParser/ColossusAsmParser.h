@@ -43,6 +43,7 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCParser/MCParsedAsmOperand.h"
 #include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCRegister.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCSymbol.h"
@@ -79,7 +80,7 @@ class ColossusOperand : public MCParsedAsmOperand {
   };
 
   struct RegOp {
-    unsigned RegNum;
+    MCRegister Reg;
     ColossusMCInstrInfo::OperandModifier OperandModifier;
     unsigned Broadcast;
   };
@@ -120,12 +121,12 @@ public:
   }
 
   static std::unique_ptr<ColossusOperand>
-  createReg(unsigned Num, SMLoc StartLoc, SMLoc EndLoc,
+  createReg(MCRegister Reg, SMLoc StartLoc, SMLoc EndLoc,
             ColossusMCInstrInfo::OperandModifier OperandModifier =
                 ColossusMCInstrInfo::OperandNoPostInc,
             unsigned Broadcast = 0) {
     auto Op = std::make_unique<ColossusOperand>(KindReg, StartLoc, EndLoc);
-    Op->Reg.RegNum = Num;
+    Op->Reg.Reg = Reg;
     Op->Reg.OperandModifier = OperandModifier;
     Op->Reg.Broadcast = Broadcast;
     return Op;
@@ -220,9 +221,9 @@ public:
 
   // Register operands.
   bool isReg() const override { return Kind == KindReg; }
-  unsigned getReg() const override {
+  MCRegister getReg() const override {
     assert((Kind == KindReg || Kind == KindBroadcast) && "Not a register");
-    return Reg.RegNum;
+    return Reg.Reg;
   }
 
   ColossusMCInstrInfo::OperandModifier getOperandModifier() const {
@@ -275,8 +276,8 @@ public:
       return false;
     }
     return isa<MCSymbolRefExpr>(BinExpr->getLHS()) &&
-          (isa<MCSymbolRefExpr>(BinExpr->getRHS()) ||
-           isa<MCConstantExpr>(BinExpr->getRHS()));
+           (isa<MCSymbolRefExpr>(BinExpr->getRHS()) ||
+            isa<MCConstantExpr>(BinExpr->getRHS()));
   }
   static bool isSymbolRefExprLeaf(const MCExpr *Expr) {
     return isa<MCSymbolRefExpr>(Expr);
@@ -539,8 +540,7 @@ private:
   ParseStatus parseImmAddressOperand(OperandVector &Operands);
 
   // Custom parsing for accumulator register operands.
-  template <int vecSize>
-  ParseStatus parseACCOperand(OperandVector &Operands);
+  template <int vecSize> ParseStatus parseACCOperand(OperandVector &Operands);
 
   ParseStatus parseBroadcastOperand(OperandVector &Operands);
 
@@ -580,7 +580,7 @@ public:
   bool parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) override;
   bool ParseDirective(AsmToken DirectiveID) override;
   ParseStatus tryParseRegister(MCRegister &Reg, SMLoc &StartLoc,
-                                        SMLoc &EndLoc) override;
+                               SMLoc &EndLoc) override;
   bool parseRegister(MCRegister &Reg, SMLoc &StartLoc, SMLoc &EndLoc) override;
   bool ParseInstruction(ParseInstructionInfo &Info, StringRef Name,
                         SMLoc NameLoc, OperandVector &Operands) override;
@@ -590,14 +590,14 @@ public:
                                bool MatchingInlineAsm) override;
 
   std::optional<bool> ExpandMacroInstruction(MCInst &Inst, SMLoc IDLoc,
-                                              MCStreamer &Out);
+                                             MCStreamer &Out);
 
   std::optional<bool> ExpandMacroLdconst(MCInst &Inst, SMLoc IDLoc,
-                                          MCStreamer &Out, unsigned SetziOpcode,
-                                          unsigned OrOpcode);
+                                         MCStreamer &Out, unsigned SetziOpcode,
+                                         unsigned OrOpcode);
 
   std::optional<bool> ExpandMacroSubImm(MCInst &Inst, SMLoc IDLoc,
-                                         MCStreamer &Out);
+                                        MCStreamer &Out);
 
   bool ParseFloat16(bool Negate, uint16_t &Value);
 
