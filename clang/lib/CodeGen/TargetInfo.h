@@ -15,8 +15,8 @@
 #define LLVM_CLANG_LIB_CODEGEN_TARGETINFO_H
 
 #include "CGBuilder.h"
-#include "CodeGenModule.h"
 #include "CGValue.h"
+#include "CodeGenModule.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/SyncScope.h"
@@ -28,7 +28,7 @@ class Constant;
 class GlobalValue;
 class Type;
 class Value;
-}
+} // namespace llvm
 
 namespace clang {
 class Decl;
@@ -155,9 +155,9 @@ public:
   /// Performs a target specific test of a floating point value for things
   /// like IsNaN, Infinity, ... Nullptr is returned if no implementation
   /// exists.
-  virtual llvm::Value *
-  testFPKind(llvm::Value *V, unsigned BuiltinID, CGBuilderTy &Builder,
-             CodeGenModule &CGM) const {
+  virtual llvm::Value *testFPKind(llvm::Value *V, unsigned BuiltinID,
+                                  CGBuilderTy &Builder,
+                                  CodeGenModule &CGM) const {
     assert(V->getType()->isFloatingPointTy() && "V should have an FP type.");
     return nullptr;
   }
@@ -283,7 +283,8 @@ public:
   /// \return ConstantPointerNull with the given type \p T.
   /// Each target can override it to return its own desired constant value.
   virtual llvm::Constant *getNullPointer(const CodeGen::CodeGenModule &CGM,
-      llvm::PointerType *T, QualType QT) const;
+                                         llvm::PointerType *T,
+                                         QualType QT) const;
 
   /// Get target favored AST address space of a global variable for languages
   /// other than OpenCL and CUDA.
@@ -564,6 +565,9 @@ createWinX86_64TargetCodeGenInfo(CodeGenModule &CGM, X86AVXABILevel AVXLevel);
 
 std::unique_ptr<TargetCodeGenInfo>
 createXCoreTargetCodeGenInfo(CodeGenModule &CGM);
+
+std::unique_ptr<TargetCodeGenInfo>
+createColossusTargetCodeGenInfo(CodeGenModule &CGM);
 
 } // namespace CodeGen
 } // namespace clang

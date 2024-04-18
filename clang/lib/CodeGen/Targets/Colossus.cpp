@@ -149,3 +149,8 @@ Address ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
 
   return Val;
 }
+
+std::unique_ptr<TargetCodeGenInfo>
+CodeGen::createColossusTargetCodeGenInfo(CodeGenModule &CGM) {
+  return std::make_unique<ColossusTargetCodeGenInfo>(CGM.getTypes());
+}
