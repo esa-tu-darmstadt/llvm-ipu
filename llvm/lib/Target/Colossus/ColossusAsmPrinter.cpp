@@ -41,6 +41,7 @@
 #include "ColossusTargetMachine.h"
 #include "ColossusTargetStreamer.h"
 #include "MCTargetDesc/ColossusInstPrinter.h"
+#include "MCTargetDesc/ColossusMCTargetDesc.h"
 #include "TargetInfo/ColossusTargetInfo.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
@@ -59,6 +60,7 @@
 #include "llvm/IR/Mangler.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCDirectives.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSectionELF.h"
@@ -76,48 +78,45 @@ using namespace llvm;
 #define DEBUG_TYPE "colossus-asm-printer"
 
 namespace {
-  class ColossusAsmPrinter : public AsmPrinter {
-    ColossusMCInstLower MCInstLowering;
-    DenseMap<MCSymbol const *, unsigned> stackSizeSecIds;
+class ColossusAsmPrinter : public AsmPrinter {
+  ColossusMCInstLower MCInstLowering;
+  DenseMap<MCSymbol const *, unsigned> stackSizeSecIds;
 
-  public:
-    explicit ColossusAsmPrinter(TargetMachine &TM,
-                                std::unique_ptr<MCStreamer> Streamer)
-      : AsmPrinter(TM, std::move(Streamer)),
-        MCInstLowering(*this) {}
+public:
+  explicit ColossusAsmPrinter(TargetMachine &TM,
+                              std::unique_ptr<MCStreamer> Streamer)
+      : AsmPrinter(TM, std::move(Streamer)), MCInstLowering(*this) {}
 
-    StringRef getPassName() const override {
-      return "Colossus Assembly Printer";
-    }
+  StringRef getPassName() const override { return "Colossus Assembly Printer"; }
 
-    void emitFunctionEntryLabel() override;
-    void emitInstruction(const MachineInstr *MI) override;
-    void emitFunctionBodyStart() override;
-    void emitStartOfAsmFile(Module &) override;
+  void emitFunctionEntryLabel() override;
+  void emitInstruction(const MachineInstr *MI) override;
+  void emitFunctionBodyStart() override;
+  void emitStartOfAsmFile(Module &) override;
 
-    void printOperand(const MachineInstr *MI,
-                      int opNum,
-                      raw_ostream &O);
-    bool PrintAsmOperand(const MachineInstr *MI,
-                         unsigned OpNo,
-                         const char *ExtraCode,
-                         raw_ostream &O) override;
-    bool PrintAsmMemoryOperand(const MachineInstr *MI,
-                               unsigned OpNum,
-                               const char *ExtraCode,
-                               raw_ostream &O) override;
+  void printOperand(const MachineInstr *MI, int opNum, raw_ostream &O);
+  bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
+                       const char *ExtraCode, raw_ostream &O) override;
+  bool PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNum,
+                             const char *ExtraCode, raw_ostream &O) override;
 
-    bool lowerOperand(const MachineOperand &MO, MCOperand &MCOp);
+  bool lowerOperand(const MachineOperand &MO, MCOperand &MCOp);
 
-  private:
-    // tblgen'erated function.
-    bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
-                                     const MachineInstr *MI);
-  };
+private:
+  // tblgen'erated function.
+  bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
+                                   const MachineInstr *MI);
+};
 } // end of anonymous namespace
 
 void ColossusAsmPrinter::emitFunctionEntryLabel() {
   (*OutStreamer).emitLabel(CurrentFnSym);
+  if (getSubtargetInfo().getFeatureBits()[Colossus::ModeSupervisor]) {
+    OutStreamer->emitAssemblerFlag(llvm::MCAF_Supervisor);
+  }
+  if (getSubtargetInfo().getFeatureBits()[Colossus::ModeWorker]) {
+    OutStreamer->emitAssemblerFlag(llvm::MCAF_Worker);
+  }
 }
 
 void ColossusAsmPrinter::emitFunctionBodyStart() {
@@ -156,7 +155,7 @@ void ColossusAsmPrinter::emitInstruction(const MachineInstr *MI) {
              "LABEL not permitted in BUNDLE");
 
       const MachineInstr *BundleMI = &*MII;
-      MCInst * instr = new (OutContext) MCInst(MCInstLowering.Lower(BundleMI));
+      MCInst *instr = new (OutContext) MCInst(MCInstLowering.Lower(BundleMI));
       MCB.addOperand(MCOperand::createInst(instr));
       ++MII;
     }
@@ -175,8 +174,8 @@ void ColossusAsmPrinter::emitInstruction(const MachineInstr *MI) {
   }
 }
 
-void ColossusAsmPrinter::
-printOperand(const MachineInstr *MI, int opNum, raw_ostream &O) {
+void ColossusAsmPrinter::printOperand(const MachineInstr *MI, int opNum,
+                                      raw_ostream &O) {
   const MachineOperand &MO = MI->getOperand(opNum);
   switch (MO.getType()) {
   default:
@@ -194,7 +193,7 @@ printOperand(const MachineInstr *MI, int opNum, raw_ostream &O) {
     getSymbol(MO.getGlobal())->print(O, MAI);
     break;
   case MachineOperand::MO_BlockAddress:
-    O <<  GetBlockAddressSymbol(MO.getBlockAddress())->getName();
+    O << GetBlockAddressSymbol(MO.getBlockAddress())->getName();
     break;
   case MachineOperand::MO_ExternalSymbol:
     O << MO.getSymbolName();
@@ -203,11 +202,9 @@ printOperand(const MachineInstr *MI, int opNum, raw_ostream &O) {
 }
 
 /// Print out an operand for an inline asm expression.
-bool ColossusAsmPrinter::
-PrintAsmOperand(const MachineInstr *MI,
-                unsigned OpNo,
-                const char *ExtraCode,
-                raw_ostream &O) {
+bool ColossusAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
+                                         const char *ExtraCode,
+                                         raw_ostream &O) {
   // Print the operand if there is no operand modifier.
   if (!ExtraCode || !ExtraCode[0]) {
     printOperand(MI, OpNo, O);
@@ -217,11 +214,10 @@ PrintAsmOperand(const MachineInstr *MI,
   return AsmPrinter::PrintAsmOperand(MI, OpNo, ExtraCode, O);
 }
 
-bool ColossusAsmPrinter::
-PrintAsmMemoryOperand(const MachineInstr *MI,
-                      unsigned OpNum,
-                      const char *ExtraCode,
-                      raw_ostream &O) {
+bool ColossusAsmPrinter::PrintAsmMemoryOperand(const MachineInstr *MI,
+                                               unsigned OpNum,
+                                               const char *ExtraCode,
+                                               raw_ostream &O) {
   if (ExtraCode && ExtraCode[0]) {
     return true; // Unknown modifier.
   }
