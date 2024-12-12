@@ -269,14 +269,17 @@ enum {
   /// Calling convention used for RISC-V V-extension.
   RISCV_VectorCall = 110,
 
+  /// Preserve X1-X15, X19-X29, SP, Z0-Z31, P0-P15.
+  AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1 = 111,
+
   /// IPU local patch begin
   /// \brief The CC used for vertex functions on Colossus devices.
-  Colossus_Vertex = 111,
+  Colossus_Vertex = 112,
   /// IPU local patch end
 
-  /// The highest possible calling convention ID. Must be some 2^k - 1.
+  /// The highest possible ID. Must be some 2^k - 1.
   MaxID = 1023
-};
+  };
 
 } // end namespace CallingConv
 

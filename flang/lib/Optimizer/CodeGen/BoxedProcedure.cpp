@@ -51,9 +51,9 @@ public:
   /// not at all depending on the implementation target's characteristics and
   /// preference.
   bool needsConversion(mlir::Type ty) {
-    if (ty.isa<BoxProcType>())
+    if (mlir::isa<BoxProcType>(ty))
       return true;
-    if (auto funcTy = ty.dyn_cast<mlir::FunctionType>()) {
+    if (auto funcTy = mlir::dyn_cast<mlir::FunctionType>(ty)) {
       for (auto t : funcTy.getInputs())
         if (needsConversion(t))
           return true;
@@ -62,13 +62,13 @@ public:
           return true;
       return false;
     }
-    if (auto tupleTy = ty.dyn_cast<mlir::TupleType>()) {
+    if (auto tupleTy = mlir::dyn_cast<mlir::TupleType>(ty)) {
       for (auto t : tupleTy.getTypes())
         if (needsConversion(t))
           return true;
       return false;
     }
-    if (auto recTy = ty.dyn_cast<RecordType>()) {
+    if (auto recTy = mlir::dyn_cast<RecordType>(ty)) {
       auto visited = visitedTypes.find(ty);
       if (visited != visitedTypes.end())
         return visited->second;
@@ -97,12 +97,14 @@ public:
         visitedTypes.find(ty)->second = result;
       return result;
     }
-    if (auto boxTy = ty.dyn_cast<BaseBoxType>())
+    if (auto boxTy = mlir::dyn_cast<BaseBoxType>(ty))
       return needsConversion(boxTy.getEleTy());
     if (isa_ref_type(ty))
       return needsConversion(unwrapRefType(ty));
-    if (auto t = ty.dyn_cast<SequenceType>())
+    if (auto t = mlir::dyn_cast<SequenceType>(ty))
       return needsConversion(unwrapSequenceType(ty));
+    if (auto t = mlir::dyn_cast<TypeDescType>(ty))
+      return needsConversion(t.getOfTy());
     return false;
   }
 
@@ -167,6 +169,9 @@ public:
       rec.finalize(ps, cs);
       return rec;
     });
+    addConversion([&](TypeDescType ty) {
+      return TypeDescType::get(convertType(ty.getOfTy()));
+    });
     addArgumentMaterialization(materializeProcedure);
     addSourceMaterialization(materializeProcedure);
     addTargetMaterialization(materializeProcedure);
@@ -211,8 +216,7 @@ private:
 class BoxedProcedurePass
     : public fir::impl::BoxedProcedurePassBase<BoxedProcedurePass> {
 public:
-  BoxedProcedurePass() { options = {true}; }
-  BoxedProcedurePass(bool useThunks) { options = {useThunks}; }
+  using BoxedProcedurePassBase<BoxedProcedurePass>::BoxedProcedurePassBase;
 
   inline mlir::ModuleOp getModule() { return getOperation(); }
 
@@ -221,7 +225,6 @@ public:
       auto *context = &getContext();
       mlir::IRRewriter rewriter(context);
       BoxprocTypeRewriter typeConverter(mlir::UnknownLoc::get(context));
-      mlir::Dialect *firDialect = context->getLoadedDialect("fir");
       getModule().walk([&](mlir::Operation *op) {
         bool opIsValid = true;
         typeConverter.setLocation(op->getLoc());
@@ -246,7 +249,7 @@ public:
           if (typeConverter.needsConversion(ty)) {
             rewriter.startOpModification(func);
             auto toTy =
-                typeConverter.convertType(ty).cast<mlir::FunctionType>();
+                mlir::cast<mlir::FunctionType>(typeConverter.convertType(ty));
             if (!func.empty())
               for (auto e : llvm::enumerate(toTy.getInputs())) {
                 unsigned i = e.index();
@@ -263,7 +266,7 @@ public:
           // Rewrite all `fir.emboxproc` ops to either `fir.convert` or a thunk
           // as required.
           mlir::Type toTy = typeConverter.convertType(
-              embox.getType().cast<BoxProcType>().getEleTy());
+              mlir::cast<BoxProcType>(embox.getType()).getEleTy());
           rewriter.setInsertionPoint(embox);
           if (embox.getHost()) {
             // Create the thunk.
@@ -367,13 +370,22 @@ public:
                 index, toTy, index.getFieldId(), toOnTy, index.getTypeparams());
             opIsValid = false;
           }
-        } else if (op->getDialect() == firDialect) {
+        } else {
           rewriter.startOpModification(op);
+          // Convert the operands if needed
           for (auto i : llvm::enumerate(op->getResultTypes()))
             if (typeConverter.needsConversion(i.value())) {
               auto toTy = typeConverter.convertType(i.value());
               op->getResult(i.index()).setType(toTy);
             }
+
+          // Convert the type attributes if needed
+          for (const mlir::NamedAttribute &attr : op->getAttrDictionary())
+            if (auto tyAttr = llvm::dyn_cast<mlir::TypeAttr>(attr.getValue()))
+              if (typeConverter.needsConversion(tyAttr.getValue())) {
+                auto toTy = typeConverter.convertType(tyAttr.getValue());
+                op->setAttr(attr.getName(), mlir::TypeAttr::get(toTy));
+              }
           rewriter.finalizeOpModification(op);
         }
         // Ensure block arguments are updated if needed.
@@ -397,11 +409,3 @@ private:
   BoxedProcedureOptions options;
 };
 } // namespace
-
-std::unique_ptr<mlir::Pass> fir::createBoxedProcedurePass() {
-  return std::make_unique<BoxedProcedurePass>();
-}
-
-std::unique_ptr<mlir::Pass> fir::createBoxedProcedurePass(bool useThunks) {
-  return std::make_unique<BoxedProcedurePass>(useThunks);
-}

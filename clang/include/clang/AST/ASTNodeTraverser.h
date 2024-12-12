@@ -439,6 +439,11 @@ public:
   void VisitBTFTagAttributedType(const BTFTagAttributedType *T) {
     Visit(T->getWrappedType());
   }
+  void VisitHLSLAttributedResourceType(const HLSLAttributedResourceType *T) {
+    QualType Contained = T->getContainedType();
+    if (!Contained.isNull())
+      Visit(Contained);
+  }
   void VisitSubstTemplateTypeParmType(const SubstTemplateTypeParmType *) {}
   void
   VisitSubstTemplateTypeParmPackType(const SubstTemplateTypeParmPackType *T) {
@@ -583,7 +588,7 @@ public:
   void VisitCapturedDecl(const CapturedDecl *D) { Visit(D->getBody()); }
 
   void VisitOMPThreadPrivateDecl(const OMPThreadPrivateDecl *D) {
-    for (const auto *E : D->varlists())
+    for (const auto *E : D->varlist())
       Visit(E);
   }
 
@@ -603,7 +608,7 @@ public:
   }
 
   void VisitOMPAllocateDecl(const OMPAllocateDecl *D) {
-    for (const auto *E : D->varlists())
+    for (const auto *E : D->varlist())
       Visit(E);
     for (const auto *C : D->clauselists())
       Visit(C);
@@ -695,7 +700,7 @@ public:
     if (const auto *TC = D->getTypeConstraint())
       Visit(TC->getImmediatelyDeclaredConstraint());
     if (D->hasDefaultArgument())
-      Visit(D->getDefaultArgument(), SourceRange(),
+      Visit(D->getDefaultArgument().getArgument(), SourceRange(),
             D->getDefaultArgStorage().getInheritedFrom(),
             D->defaultArgumentWasInherited() ? "inherited from" : "previous");
   }
@@ -704,9 +709,9 @@ public:
     if (const auto *E = D->getPlaceholderTypeConstraint())
       Visit(E);
     if (D->hasDefaultArgument())
-      Visit(D->getDefaultArgument(), SourceRange(),
-            D->getDefaultArgStorage().getInheritedFrom(),
-            D->defaultArgumentWasInherited() ? "inherited from" : "previous");
+      dumpTemplateArgumentLoc(
+          D->getDefaultArgument(), D->getDefaultArgStorage().getInheritedFrom(),
+          D->defaultArgumentWasInherited() ? "inherited from" : "previous");
   }
 
   void VisitTemplateTemplateParmDecl(const TemplateTemplateParmDecl *D) {
@@ -795,6 +800,13 @@ public:
       Visit(A);
   }
 
+  void VisitLabelStmt(const LabelStmt *Node) {
+    if (Node->getDecl()->hasAttrs()) {
+      for (const auto *A : Node->getDecl()->getAttrs())
+        Visit(A);
+    }
+  }
+
   void VisitCXXCatchStmt(const CXXCatchStmt *Node) {
     Visit(Node->getExceptionDecl());
   }
@@ -844,11 +856,23 @@ public:
     }
   }
 
+  void VisitUnresolvedLookupExpr(const UnresolvedLookupExpr *E) {
+    if (E->hasExplicitTemplateArgs())
+      for (auto Arg : E->template_arguments())
+        Visit(Arg.getArgument());
+  }
+
   void VisitRequiresExpr(const RequiresExpr *E) {
     for (auto *D : E->getLocalParameters())
       Visit(D);
     for (auto *R : E->getRequirements())
       Visit(R);
+  }
+
+  void VisitTypeTraitExpr(const TypeTraitExpr *E) {
+    // Argument types are not children of the TypeTraitExpr.
+    for (auto *A : E->getArgs())
+      Visit(A->getType());
   }
 
   void VisitLambdaExpr(const LambdaExpr *Node) {

@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Analysis/FlowSensitive/ASTOps.h"
+#include "clang/AST/ASTLambda.h"
 #include "clang/AST/ComputeDependence.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
@@ -33,12 +34,20 @@ namespace clang::dataflow {
 
 const Expr &ignoreCFGOmittedNodes(const Expr &E) {
   const Expr *Current = &E;
-  if (auto *EWC = dyn_cast<ExprWithCleanups>(Current)) {
-    Current = EWC->getSubExpr();
+  const Expr *Last = nullptr;
+  while (Current != Last) {
+    Last = Current;
+    if (auto *EWC = dyn_cast<ExprWithCleanups>(Current)) {
+      Current = EWC->getSubExpr();
+      assert(Current != nullptr);
+    }
+    if (auto *CE = dyn_cast<ConstantExpr>(Current)) {
+      Current = CE->getSubExpr();
+      assert(Current != nullptr);
+    }
+    Current = Current->IgnoreParens();
     assert(Current != nullptr);
   }
-  Current = Current->IgnoreParens();
-  assert(Current != nullptr);
   return *Current;
 }
 
@@ -80,18 +89,20 @@ bool containsSameFields(const FieldSet &Fields,
 }
 
 /// Returns the fields of a `RecordDecl` that are initialized by an
-/// `InitListExpr`, in the order in which they appear in
-/// `InitListExpr::inits()`.
-/// `Init->getType()` must be a record type.
+/// `InitListExpr` or `CXXParenListInitExpr`, in the order in which they appear
+/// in `InitListExpr::inits()` / `CXXParenListInitExpr::getInitExprs()`.
+/// `InitList->getType()` must be a record type.
+template <class InitListT>
 static std::vector<const FieldDecl *>
-getFieldsForInitListExpr(const InitListExpr *InitList) {
+getFieldsForInitListExpr(const InitListT *InitList) {
   const RecordDecl *RD = InitList->getType()->getAsRecordDecl();
   assert(RD != nullptr);
 
   std::vector<const FieldDecl *> Fields;
 
   if (InitList->getType()->isUnionType()) {
-    Fields.push_back(InitList->getInitializedFieldInUnion());
+    if (const FieldDecl *Field = InitList->getInitializedFieldInUnion())
+      Fields.push_back(Field);
     return Fields;
   }
 
@@ -101,26 +112,38 @@ getFieldsForInitListExpr(const InitListExpr *InitList) {
   // fields to avoid mapping inits to the wrongs fields.
   llvm::copy_if(
       RD->fields(), std::back_inserter(Fields),
-      [](const FieldDecl *Field) { return !Field->isUnnamedBitfield(); });
+      [](const FieldDecl *Field) { return !Field->isUnnamedBitField(); });
   return Fields;
 }
 
-RecordInitListHelper::RecordInitListHelper(const InitListExpr *InitList) {
-  auto *RD = InitList->getType()->getAsCXXRecordDecl();
-  assert(RD != nullptr);
+RecordInitListHelper::RecordInitListHelper(const InitListExpr *InitList)
+    : RecordInitListHelper(InitList->getType(),
+                           getFieldsForInitListExpr(InitList),
+                           InitList->inits()) {}
 
-  std::vector<const FieldDecl *> Fields = getFieldsForInitListExpr(InitList);
-  ArrayRef<Expr *> Inits = InitList->inits();
+RecordInitListHelper::RecordInitListHelper(
+    const CXXParenListInitExpr *ParenInitList)
+    : RecordInitListHelper(ParenInitList->getType(),
+                           getFieldsForInitListExpr(ParenInitList),
+                           ParenInitList->getInitExprs()) {}
+
+RecordInitListHelper::RecordInitListHelper(
+    QualType Ty, std::vector<const FieldDecl *> Fields,
+    ArrayRef<Expr *> Inits) {
+  auto *RD = Ty->getAsCXXRecordDecl();
+  assert(RD != nullptr);
 
   // Unions initialized with an empty initializer list need special treatment.
   // For structs/classes initialized with an empty initializer list, Clang
   // puts `ImplicitValueInitExpr`s in `InitListExpr::inits()`, but for unions,
   // it doesn't do this -- so we create an `ImplicitValueInitExpr` ourselves.
   SmallVector<Expr *> InitsForUnion;
-  if (InitList->getType()->isUnionType() && Inits.empty()) {
-    assert(Fields.size() == 1);
-    ImplicitValueInitForUnion.emplace(Fields.front()->getType());
-    InitsForUnion.push_back(&*ImplicitValueInitForUnion);
+  if (Ty->isUnionType() && Inits.empty()) {
+    assert(Fields.size() <= 1);
+    if (!Fields.empty()) {
+      ImplicitValueInitForUnion.emplace(Fields.front()->getType());
+      InitsForUnion.push_back(&*ImplicitValueInitForUnion);
+    }
     Inits = InitsForUnion;
   }
 
@@ -148,6 +171,13 @@ static void insertIfGlobal(const Decl &D,
       Globals.insert(V);
 }
 
+static void insertIfLocal(const Decl &D,
+                          llvm::DenseSet<const VarDecl *> &Locals) {
+  if (auto *V = dyn_cast<VarDecl>(&D))
+    if (V->hasLocalStorage() && !isa<ParmVarDecl>(V))
+      Locals.insert(V);
+}
+
 static void insertIfFunction(const Decl &D,
                              llvm::DenseSet<const FunctionDecl *> &Funcs) {
   if (auto *FD = dyn_cast<FunctionDecl>(&D))
@@ -169,80 +199,119 @@ static MemberExpr *getMemberForAccessor(const CXXMemberCallExpr &C) {
   return nullptr;
 }
 
-static void getReferencedDecls(const Decl &D, ReferencedDecls &Referenced) {
-  insertIfGlobal(D, Referenced.Globals);
-  insertIfFunction(D, Referenced.Functions);
-  if (const auto *Decomp = dyn_cast<DecompositionDecl>(&D))
-    for (const auto *B : Decomp->bindings())
-      if (auto *ME = dyn_cast_or_null<MemberExpr>(B->getBinding()))
-        // FIXME: should we be using `E->getFoundDecl()`?
-        if (const auto *FD = dyn_cast<FieldDecl>(ME->getMemberDecl()))
-          Referenced.Fields.insert(FD);
-}
+class ReferencedDeclsVisitor : public AnalysisASTVisitor {
+public:
+  ReferencedDeclsVisitor(ReferencedDecls &Referenced)
+      : Referenced(Referenced) {}
 
-/// Traverses `S` and inserts into `Referenced` any declarations that are
-/// declared in or referenced from sub-statements.
-static void getReferencedDecls(const Stmt &S, ReferencedDecls &Referenced) {
-  for (auto *Child : S.children())
-    if (Child != nullptr)
-      getReferencedDecls(*Child, Referenced);
-  if (const auto *DefaultArg = dyn_cast<CXXDefaultArgExpr>(&S))
-    getReferencedDecls(*DefaultArg->getExpr(), Referenced);
-  if (const auto *DefaultInit = dyn_cast<CXXDefaultInitExpr>(&S))
-    getReferencedDecls(*DefaultInit->getExpr(), Referenced);
+  void traverseConstructorInits(const CXXConstructorDecl *Ctor) {
+    for (const CXXCtorInitializer *Init : Ctor->inits()) {
+      if (Init->isMemberInitializer()) {
+        Referenced.Fields.insert(Init->getMember());
+      } else if (Init->isIndirectMemberInitializer()) {
+        for (const auto *I : Init->getIndirectMember()->chain())
+          Referenced.Fields.insert(cast<FieldDecl>(I));
+      }
 
-  if (auto *DS = dyn_cast<DeclStmt>(&S)) {
-    if (DS->isSingleDecl())
-      getReferencedDecls(*DS->getSingleDecl(), Referenced);
-    else
-      for (auto *D : DS->getDeclGroup())
-        getReferencedDecls(*D, Referenced);
-  } else if (auto *E = dyn_cast<DeclRefExpr>(&S)) {
+      Expr *InitExpr = Init->getInit();
+
+      // Also collect declarations referenced in `InitExpr`.
+      TraverseStmt(InitExpr);
+
+      // If this is a `CXXDefaultInitExpr`, also collect declarations referenced
+      // within the default expression.
+      if (auto *DefaultInit = dyn_cast<CXXDefaultInitExpr>(InitExpr))
+        TraverseStmt(DefaultInit->getExpr());
+    }
+  }
+
+  bool VisitDecl(Decl *D) override {
+    insertIfGlobal(*D, Referenced.Globals);
+    insertIfLocal(*D, Referenced.Locals);
+    insertIfFunction(*D, Referenced.Functions);
+    return true;
+  }
+
+  bool VisitDeclRefExpr(DeclRefExpr *E) override {
     insertIfGlobal(*E->getDecl(), Referenced.Globals);
+    insertIfLocal(*E->getDecl(), Referenced.Locals);
     insertIfFunction(*E->getDecl(), Referenced.Functions);
-  } else if (const auto *C = dyn_cast<CXXMemberCallExpr>(&S)) {
+    return true;
+  }
+
+  bool VisitCXXMemberCallExpr(CXXMemberCallExpr *C) override {
     // If this is a method that returns a member variable but does nothing else,
     // model the field of the return value.
     if (MemberExpr *E = getMemberForAccessor(*C))
       if (const auto *FD = dyn_cast<FieldDecl>(E->getMemberDecl()))
         Referenced.Fields.insert(FD);
-  } else if (auto *E = dyn_cast<MemberExpr>(&S)) {
+    return true;
+  }
+
+  bool VisitMemberExpr(MemberExpr *E) override {
     // FIXME: should we be using `E->getFoundDecl()`?
     const ValueDecl *VD = E->getMemberDecl();
     insertIfGlobal(*VD, Referenced.Globals);
     insertIfFunction(*VD, Referenced.Functions);
     if (const auto *FD = dyn_cast<FieldDecl>(VD))
       Referenced.Fields.insert(FD);
-  } else if (auto *InitList = dyn_cast<InitListExpr>(&S)) {
+    return true;
+  }
+
+  bool VisitInitListExpr(InitListExpr *InitList) override {
     if (InitList->getType()->isRecordType())
       for (const auto *FD : getFieldsForInitListExpr(InitList))
         Referenced.Fields.insert(FD);
+    return true;
   }
-}
+
+  bool VisitCXXParenListInitExpr(CXXParenListInitExpr *ParenInitList) override {
+    if (ParenInitList->getType()->isRecordType())
+      for (const auto *FD : getFieldsForInitListExpr(ParenInitList))
+        Referenced.Fields.insert(FD);
+    return true;
+  }
+
+private:
+  ReferencedDecls &Referenced;
+};
 
 ReferencedDecls getReferencedDecls(const FunctionDecl &FD) {
   ReferencedDecls Result;
-  // Look for global variable and field references in the
-  // constructor-initializers.
-  if (const auto *CtorDecl = dyn_cast<CXXConstructorDecl>(&FD)) {
-    for (const auto *Init : CtorDecl->inits()) {
-      if (Init->isMemberInitializer()) {
-        Result.Fields.insert(Init->getMember());
-      } else if (Init->isIndirectMemberInitializer()) {
-        for (const auto *I : Init->getIndirectMember()->chain())
-          Result.Fields.insert(cast<FieldDecl>(I));
-      }
-      const Expr *E = Init->getInit();
-      assert(E != nullptr);
-      getReferencedDecls(*E, Result);
-    }
-    // Add all fields mentioned in default member initializers.
-    for (const FieldDecl *F : CtorDecl->getParent()->fields())
-      if (const auto *I = F->getInClassInitializer())
-        getReferencedDecls(*I, Result);
-  }
-  getReferencedDecls(*FD.getBody(), Result);
+  ReferencedDeclsVisitor Visitor(Result);
+  Visitor.TraverseStmt(FD.getBody());
+  if (const auto *CtorDecl = dyn_cast<CXXConstructorDecl>(&FD))
+    Visitor.traverseConstructorInits(CtorDecl);
 
+  // If analyzing a lambda call operator, collect all captures of parameters (of
+  // the surrounding function). This collects them even if they are not
+  // referenced in the body of the lambda call operator. Non-parameter local
+  // variables that are captured are already collected into
+  // `ReferencedDecls.Locals` when traversing the call operator body, but we
+  // collect parameters here to avoid needing to check at each referencing node
+  // whether the parameter is a lambda capture from a surrounding function or is
+  // a parameter of the current function. If it becomes necessary to limit this
+  // set to the parameters actually referenced in the body, alternative
+  // optimizations can be implemented to minimize duplicative work.
+  if (const auto *Method = dyn_cast<CXXMethodDecl>(&FD);
+      Method && isLambdaCallOperator(Method)) {
+    for (const auto &Capture : Method->getParent()->captures()) {
+      if (Capture.capturesVariable()) {
+        if (const auto *Param =
+                dyn_cast<ParmVarDecl>(Capture.getCapturedVar())) {
+          Result.LambdaCapturedParams.insert(Param);
+        }
+      }
+    }
+  }
+
+  return Result;
+}
+
+ReferencedDecls getReferencedDecls(const Stmt &S) {
+  ReferencedDecls Result;
+  ReferencedDeclsVisitor Visitor(Result);
+  Visitor.TraverseStmt(const_cast<Stmt *>(&S));
   return Result;
 }
 

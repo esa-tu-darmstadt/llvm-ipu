@@ -11,7 +11,7 @@ declare void @use_vec(<2 x i5>)
 
 define i64 @test1(i32 %x) {
 ; CHECK-LABEL: @test1(
-; CHECK-NEXT:    [[T:%.*]] = call i32 @llvm.ctpop.i32(i32 [[X:%.*]]), !range [[RNG0:![0-9]+]]
+; CHECK-NEXT:    [[T:%.*]] = call range(i32 0, 33) i32 @llvm.ctpop.i32(i32 [[X:%.*]])
 ; CHECK-NEXT:    [[S:%.*]] = zext nneg i32 [[T]] to i64
 ; CHECK-NEXT:    ret i64 [[S]]
 ;
@@ -22,7 +22,7 @@ define i64 @test1(i32 %x) {
 
 define i64 @test2(i32 %x) {
 ; CHECK-LABEL: @test2(
-; CHECK-NEXT:    [[T:%.*]] = call i32 @llvm.ctlz.i32(i32 [[X:%.*]], i1 true), !range [[RNG0]]
+; CHECK-NEXT:    [[T:%.*]] = call range(i32 0, 33) i32 @llvm.ctlz.i32(i32 [[X:%.*]], i1 true)
 ; CHECK-NEXT:    [[S:%.*]] = zext nneg i32 [[T]] to i64
 ; CHECK-NEXT:    ret i64 [[S]]
 ;
@@ -33,7 +33,7 @@ define i64 @test2(i32 %x) {
 
 define i64 @test3(i32 %x) {
 ; CHECK-LABEL: @test3(
-; CHECK-NEXT:    [[T:%.*]] = call i32 @llvm.cttz.i32(i32 [[X:%.*]], i1 true), !range [[RNG0]]
+; CHECK-NEXT:    [[T:%.*]] = call range(i32 0, 33) i32 @llvm.cttz.i32(i32 [[X:%.*]], i1 true)
 ; CHECK-NEXT:    [[S:%.*]] = zext nneg i32 [[T]] to i64
 ; CHECK-NEXT:    ret i64 [[S]]
 ;
@@ -143,8 +143,8 @@ define i32 @test10(i32 %i) {
 
 define <2 x i32> @test10_vec(<2 x i32> %i) {
 ; CHECK-LABEL: @test10_vec(
-; CHECK-NEXT:    [[D1:%.*]] = shl <2 x i32> [[I:%.*]], <i32 30, i32 30>
-; CHECK-NEXT:    [[D:%.*]] = ashr exact <2 x i32> [[D1]], <i32 30, i32 30>
+; CHECK-NEXT:    [[D1:%.*]] = shl <2 x i32> [[I:%.*]], splat (i32 30)
+; CHECK-NEXT:    [[D:%.*]] = ashr exact <2 x i32> [[D1]], splat (i32 30)
 ; CHECK-NEXT:    ret <2 x i32> [[D]]
 ;
   %A = trunc <2 x i32> %i to <2 x i8>
@@ -338,8 +338,8 @@ define <2 x i32> @smear_set_bit_vec_use1(<2 x i32> %x) {
 ; CHECK-LABEL: @smear_set_bit_vec_use1(
 ; CHECK-NEXT:    [[T:%.*]] = trunc <2 x i32> [[X:%.*]] to <2 x i5>
 ; CHECK-NEXT:    call void @use_vec(<2 x i5> [[T]])
-; CHECK-NEXT:    [[TMP1:%.*]] = shl <2 x i32> [[X]], <i32 27, i32 27>
-; CHECK-NEXT:    [[S:%.*]] = ashr <2 x i32> [[TMP1]], <i32 31, i32 31>
+; CHECK-NEXT:    [[TMP1:%.*]] = shl <2 x i32> [[X]], splat (i32 27)
+; CHECK-NEXT:    [[S:%.*]] = ashr <2 x i32> [[TMP1]], splat (i32 31)
 ; CHECK-NEXT:    ret <2 x i32> [[S]]
 ;
   %t = trunc <2 x i32> %x to <2 x i5>

@@ -61,12 +61,13 @@ enum ID {
 #undef OPTION
 };
 
-#define PREFIX(NAME, VALUE)                                                    \
-  static constexpr StringLiteral NAME##_init[] = VALUE;                        \
-  static constexpr ArrayRef<StringLiteral> NAME(NAME##_init,                   \
-                                                std::size(NAME##_init) - 1);
+#define OPTTABLE_STR_TABLE_CODE
 #include "Options.inc"
-#undef PREFIX
+#undef OPTTABLE_STR_TABLE_CODE
+
+#define OPTTABLE_PREFIXES_TABLE_CODE
+#include "Options.inc"
+#undef OPTTABLE_PREFIXES_TABLE_CODE
 
 static constexpr opt::OptTable::Info InfoTable[] = {
 #define OPTION(...) LLVM_CONSTRUCT_OPT_INFO(__VA_ARGS__),
@@ -76,7 +77,8 @@ static constexpr opt::OptTable::Info InfoTable[] = {
 
 class LLDBOptTable : public opt::GenericOptTable {
 public:
-  LLDBOptTable() : opt::GenericOptTable(InfoTable) {}
+  LLDBOptTable()
+      : opt::GenericOptTable(OptionStrTable, OptionPrefixesTable, InfoTable) {}
 };
 } // namespace
 
@@ -442,6 +444,7 @@ int Driver::MainLoop() {
   m_debugger.SetInputFileHandle(stdin, false);
 
   m_debugger.SetUseExternalEditor(m_option_data.m_use_external_editor);
+  m_debugger.SetShowInlineDiagnostics(true);
 
   struct winsize window_size;
   if ((isatty(STDIN_FILENO) != 0) &&
@@ -733,8 +736,14 @@ int main(int argc, char const *argv[]) {
   // Setup LLVM signal handlers and make sure we call llvm_shutdown() on
   // destruction.
   llvm::InitLLVM IL(argc, argv, /*InstallPipeSignalExitHandler=*/false);
+#if !defined(__APPLE__)
   llvm::setBugReportMsg("PLEASE submit a bug report to " LLDB_BUG_REPORT_URL
                         " and include the crash backtrace.\n");
+#else
+  llvm::setBugReportMsg("PLEASE submit a bug report to " LLDB_BUG_REPORT_URL
+                        " and include the crash report from "
+                        "~/Library/Logs/DiagnosticReports/.\n");
+#endif
 
   // Parse arguments.
   LLDBOptTable T;

@@ -123,7 +123,5 @@ void Colossus::relocate(uint8_t *Loc, const Relocation &Rel,
   }
 }
 
-TargetInfo *elf::getColossusTargetInfo() {
-  static Colossus Target;
-  return &Target;
-}
+void elf::setColossusTargetInfo(Ctx &ctx) { ctx.target.reset(new Colossus(ctx)); }
+

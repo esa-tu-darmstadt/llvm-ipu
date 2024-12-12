@@ -465,9 +465,8 @@ bool AnalysisState::isValueRead(Value value) const {
 
   while (!workingSet.empty()) {
     OpOperand *uMaybeReading = workingSet.pop_back_val();
-    if (visited.contains(uMaybeReading))
+    if (!visited.insert(uMaybeReading).second)
       continue;
-    visited.insert(uMaybeReading);
 
     // Skip over all ops that neither read nor write (but create an alias).
     if (bufferizesToAliasOnly(*uMaybeReading))
@@ -684,7 +683,7 @@ bufferization::getBufferType(Value value, const BufferizationOptions &options,
 
   // Op is not bufferizable.
   auto memSpace =
-      options.defaultMemorySpaceFn(value.getType().cast<TensorType>());
+      options.defaultMemorySpaceFn(cast<TensorType>(value.getType()));
   if (!memSpace.has_value())
     return op->emitError("could not infer memory space");
 
@@ -719,7 +718,7 @@ void bufferization::replaceOpWithBufferizedValues(RewriterBase &rewriter,
       // loose all of its users and eventually DCE away.
       rewriter.setInsertionPointAfter(op);
       replacement = rewriter.create<bufferization::ToTensorOp>(
-          replacement.getLoc(), replacement);
+          replacement.getLoc(), opResult.getType(), replacement);
     }
     replacements.push_back(replacement);
   }
@@ -939,7 +938,7 @@ FailureOr<BaseMemRefType> bufferization::detail::defaultGetBufferType(
   // If we do not know the memory space and there is no default memory space,
   // report a failure.
   auto memSpace =
-      options.defaultMemorySpaceFn(value.getType().cast<TensorType>());
+      options.defaultMemorySpaceFn(cast<TensorType>(value.getType()));
   if (!memSpace.has_value())
     return op->emitError("could not infer memory space");
 
@@ -987,7 +986,7 @@ bufferization::detail::unknownGetAliasingValues(OpOperand &opOperand) {
   for (Region &region : opOperand.getOwner()->getRegions())
     if (!region.getBlocks().empty())
       for (BlockArgument bbArg : region.getBlocks().front().getArguments())
-        if (bbArg.getType().isa<TensorType>())
+        if (isa<TensorType>(bbArg.getType()))
           r.addAlias({bbArg, BufferRelation::Unknown, /*isDefinite=*/false});
   return r;
 }

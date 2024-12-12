@@ -25,6 +25,7 @@
 // These two headers must be included last, and make sure shlobj is required
 // after Windows.h to make sure it picks up our definition of _WIN32_WINNT
 #include "llvm/Support/Windows/WindowsSupport.h"
+#include <atlbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
 
@@ -760,14 +761,14 @@ static std::error_code getStatus(HANDLE FileHandle, file_status &Result) {
   return std::error_code();
 
 handle_status_error:
-  DWORD LastError = ::GetLastError();
-  if (LastError == ERROR_FILE_NOT_FOUND || LastError == ERROR_PATH_NOT_FOUND)
+  std::error_code Err = mapLastWindowsError();
+  if (Err == std::errc::no_such_file_or_directory)
     Result = file_status(file_type::file_not_found);
-  else if (LastError == ERROR_SHARING_VIOLATION)
+  else if (Err == std::errc::permission_denied)
     Result = file_status(file_type::type_unknown);
   else
     Result = file_status(file_type::status_error);
-  return mapWindowsError(LastError);
+  return Err;
 }
 
 std::error_code status(const Twine &path, file_status &result, bool Follow) {
@@ -1387,14 +1388,33 @@ std::error_code remove_directories(const Twine &path, bool IgnoreErrors) {
   Path16.push_back(0);
   Path16.push_back(0);
 
-  SHFILEOPSTRUCTW shfos = {};
-  shfos.wFunc = FO_DELETE;
-  shfos.pFrom = Path16.data();
-  shfos.fFlags = FOF_NO_UI;
-
-  int result = ::SHFileOperationW(&shfos);
-  if (result != 0 && !IgnoreErrors)
-    return mapWindowsError(result);
+  HRESULT HR;
+  do {
+    HR =
+        CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(HR))
+      break;
+    auto Uninitialize = make_scope_exit([] { CoUninitialize(); });
+    CComPtr<IFileOperation> FileOp;
+    HR = FileOp.CoCreateInstance(CLSID_FileOperation);
+    if (FAILED(HR))
+      break;
+    HR = FileOp->SetOperationFlags(FOF_NO_UI | FOFX_NOCOPYHOOKS);
+    if (FAILED(HR))
+      break;
+    PIDLIST_ABSOLUTE PIDL = ILCreateFromPathW(Path16.data());
+    auto FreePIDL = make_scope_exit([&PIDL] { ILFree(PIDL); });
+    CComPtr<IShellItem> ShItem;
+    HR = SHCreateItemFromIDList(PIDL, IID_PPV_ARGS(&ShItem));
+    if (FAILED(HR))
+      break;
+    HR = FileOp->DeleteItem(ShItem, NULL);
+    if (FAILED(HR))
+      break;
+    HR = FileOp->PerformOperations();
+  } while (false);
+  if (FAILED(HR) && !IgnoreErrors)
+    return mapWindowsError(HRESULT_CODE(HR));
   return std::error_code();
 }
 

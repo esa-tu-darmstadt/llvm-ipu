@@ -11,6 +11,7 @@
 #include "ClangdServer.h"
 #include "CodeComplete.h"
 #include "Compiler.h"
+#include "Config.h"
 #include "Feature.h"
 #include "Matchers.h"
 #include "Protocol.h"
@@ -1702,6 +1703,12 @@ public:
     return false;
   }
 
+  bool containedRefs(
+      const ContainedRefsRequest &,
+      llvm::function_ref<void(const ContainedRefsResult &)>) const override {
+    return false;
+  }
+
   void relations(const RelationsRequest &,
                  llvm::function_ref<void(const SymbolID &, const Symbol &)>)
       const override {}
@@ -2595,10 +2602,10 @@ TEST(SignatureHelpTest, DynamicIndexDocumentation) {
               ElementsAre(AllOf(sig("foo() -> int"), sigDoc("Member doc"))));
 }
 
-TEST(CompletionTest, CompletionFunctionArgsDisabled) {
+TEST(CompletionTest, ArgumentListsPolicy) {
   CodeCompleteOptions Opts;
   Opts.EnableSnippets = true;
-  Opts.EnableFunctionArgSnippets = false;
+  Opts.ArgumentLists = Config::ArgumentListsPolicy::Delimiters;
 
   {
     auto Results = completions(
@@ -2669,6 +2676,26 @@ TEST(CompletionTest, CompletionFunctionArgsDisabled) {
         {}, Opts);
     EXPECT_THAT(Results.Completions, UnorderedElementsAre(AllOf(
                                          named("FOO"), snippetSuffix("($0)"))));
+  }
+  {
+    Opts.ArgumentLists = Config::ArgumentListsPolicy::None;
+    auto Results = completions(
+        R"cpp(
+      void xfoo(int x, int y);
+      void f() { xfo^ })cpp",
+        {}, Opts);
+    EXPECT_THAT(Results.Completions,
+                UnorderedElementsAre(AllOf(named("xfoo"), snippetSuffix(""))));
+  }
+  {
+    Opts.ArgumentLists = Config::ArgumentListsPolicy::OpenDelimiter;
+    auto Results = completions(
+        R"cpp(
+      void xfoo(int x, int y);
+      void f() { xfo^ })cpp",
+        {}, Opts);
+    EXPECT_THAT(Results.Completions,
+                UnorderedElementsAre(AllOf(named("xfoo"), snippetSuffix("("))));
   }
 }
 
@@ -4160,7 +4187,32 @@ TEST(CompletionTest, DoNotCrash) {
     auto Completions = completions(Case);
   }
 }
+TEST(CompletionTest, PreambleFromDifferentTarget) {
+  constexpr std::string_view PreambleTarget = "x86_64";
+  constexpr std::string_view Contents =
+      "int foo(int); int num; int num2 = foo(n^";
 
+  Annotations Test(Contents);
+  auto TU = TestTU::withCode(Test.code());
+  TU.ExtraArgs.emplace_back("-target");
+  TU.ExtraArgs.emplace_back(PreambleTarget);
+  auto Preamble = TU.preamble();
+  ASSERT_TRUE(Preamble);
+  // Switch target to wasm.
+  TU.ExtraArgs.pop_back();
+  TU.ExtraArgs.emplace_back("wasm32");
+
+  MockFS FS;
+  auto Inputs = TU.inputs(FS);
+  auto Result = codeComplete(testPath(TU.Filename), Test.point(),
+                             Preamble.get(), Inputs, {});
+  auto Signatures =
+      signatureHelp(testPath(TU.Filename), Test.point(), *Preamble, Inputs, {});
+
+  // Make sure we don't crash.
+  EXPECT_THAT(Result.Completions, Not(testing::IsEmpty()));
+  EXPECT_THAT(Signatures.signatures, Not(testing::IsEmpty()));
+}
 } // namespace
 } // namespace clangd
 } // namespace clang

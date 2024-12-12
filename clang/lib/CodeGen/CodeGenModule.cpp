@@ -38,10 +38,8 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/Builtins.h"
-#include "clang/Basic/CharInfo.h"
 #include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/Diagnostic.h"
-#include "clang/Basic/FileManager.h"
 #include "clang/Basic/Module.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
@@ -53,7 +51,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Frontend/OpenMP/OMPIRBuilder.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/IR/AttributeMask.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DataLayout.h"
@@ -68,11 +66,12 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/RISCVISAInfo.h"
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/xxhash.h"
+#include "llvm/TargetParser/RISCVISAInfo.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/TargetParser/X86TargetParser.h"
+#include "llvm/Transforms/Utils/BuildLibCalls.h"
 #include <optional>
 
 using namespace clang;
@@ -114,8 +113,6 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
   default:
     return createDefaultTargetCodeGenInfo(CGM);
 
-  case llvm::Triple::le32:
-    return createPNaClTargetCodeGenInfo(CGM);
   case llvm::Triple::m68k:
     return createM68kTargetCodeGenInfo(CGM);
   case llvm::Triple::mips:
@@ -147,6 +144,8 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
       return createWindowsAArch64TargetCodeGenInfo(CGM, AArch64ABIKind::Win64);
     else if (Target.getABI() == "aapcs-soft")
       Kind = AArch64ABIKind::AAPCSSoft;
+    else if (Target.getABI() == "pauthtest")
+      Kind = AArch64ABIKind::PAuthTest;
 
     return createAArch64TargetCodeGenInfo(CGM, Kind);
   }
@@ -173,10 +172,7 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
     else if (ABIStr == "aapcs16")
       Kind = ARMABIKind::AAPCS16_VFP;
     else if (CodeGenOpts.FloatABI == "hard" ||
-             (CodeGenOpts.FloatABI != "soft" &&
-              (Triple.getEnvironment() == llvm::Triple::GNUEABIHF ||
-               Triple.getEnvironment() == llvm::Triple::MuslEABIHF ||
-               Triple.getEnvironment() == llvm::Triple::EABIHF)))
+             (CodeGenOpts.FloatABI != "soft" && Triple.isHardFloatABI()))
       Kind = ARMABIKind::AAPCS_VFP;
 
     return createARMTargetCodeGenInfo(CGM, Kind);
@@ -295,7 +291,10 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
     return createCommonSPIRTargetCodeGenInfo(CGM);
   case llvm::Triple::spirv32:
   case llvm::Triple::spirv64:
+  case llvm::Triple::spirv:
     return createSPIRVTargetCodeGenInfo(CGM);
+  case llvm::Triple::dxil:
+    return createDirectXTargetCodeGenInfo(CGM);
   case llvm::Triple::ve:
     return createVETargetCodeGenInfo(CGM);
   case llvm::Triple::csky: {
@@ -341,10 +340,11 @@ CodeGenModule::CodeGenModule(ASTContext &C,
     : Context(C), LangOpts(C.getLangOpts()), FS(FS), HeaderSearchOpts(HSO),
       PreprocessorOpts(PPO), CodeGenOpts(CGO), TheModule(M), Diags(diags),
       Target(C.getTargetInfo()), ABI(createCXXABI(*this)),
-      VMContext(M.getContext()), Types(*this), VTables(*this),
+      VMContext(M.getContext()), VTables(*this), StackHandler(diags),
       SanitizerMD(new SanitizerMetadata(*this)) {
 
   // Initialize the type cache.
+  Types.reset(new CodeGenTypes(*this));
   llvm::LLVMContext &LLVMContext = M.getContext();
   VoidTy = llvm::Type::getVoidTy(LLVMContext);
   Int8Ty = llvm::Type::getInt8Ty(LLVMContext);
@@ -360,16 +360,16 @@ CodeGenModule::CodeGenModule(ASTContext &C,
       C.toCharUnitsFromBits(C.getTargetInfo().getPointerAlign(LangAS::Default))
           .getQuantity();
   SizeSizeInBytes =
-      C.toCharUnitsFromBits(C.getTargetInfo().getMaxPointerWidth())
-          .getQuantity();
+    C.toCharUnitsFromBits(C.getTargetInfo().getMaxPointerWidth()).getQuantity();
   IntAlignInBytes =
-      C.toCharUnitsFromBits(C.getTargetInfo().getIntAlign()).getQuantity();
+    C.toCharUnitsFromBits(C.getTargetInfo().getIntAlign()).getQuantity();
   CharTy =
-      llvm::IntegerType::get(LLVMContext, C.getTargetInfo().getCharWidth());
+    llvm::IntegerType::get(LLVMContext, C.getTargetInfo().getCharWidth());
   IntTy = llvm::IntegerType::get(LLVMContext, C.getTargetInfo().getIntWidth());
   IntPtrTy = llvm::IntegerType::get(LLVMContext,
-                                    C.getTargetInfo().getMaxPointerWidth());
-  Int8PtrTy = llvm::PointerType::get(LLVMContext, 0);
+    C.getTargetInfo().getMaxPointerWidth());
+  Int8PtrTy = llvm::PointerType::get(LLVMContext,
+                                     C.getTargetAddressSpace(LangAS::Default));
   const llvm::DataLayout &DL = M.getDataLayout();
   AllocaInt8PtrTy =
       llvm::PointerType::get(LLVMContext, DL.getAllocaAddrSpace());
@@ -403,7 +403,7 @@ CodeGenModule::CodeGenModule(ASTContext &C,
   if (LangOpts.Sanitize.has(SanitizerKind::Thread) ||
       (!CodeGenOpts.RelaxedAliasing && CodeGenOpts.OptimizationLevel > 0))
     TBAA.reset(new CodeGenTBAA(Context, getTypes(), TheModule, CodeGenOpts,
-                               getLangOpts(), getCXXABI().getMangleContext()));
+                               getLangOpts()));
 
   // If debug info or coverage generation is enabled, create the CGDebugInfo
   // object.
@@ -445,6 +445,11 @@ CodeGenModule::CodeGenModule(ASTContext &C,
       }
     ModuleNameHash = llvm::getUniqueInternalLinkagePostfix(Path);
   }
+
+  // Record mregparm value now so it is visible through all of codegen.
+  if (Context.getTargetInfo().getTriple().getArch() == llvm::Triple::x86)
+    getModule().addModuleFlag(llvm::Module::Error, "NumRegisterParameters",
+                              CodeGenOpts.NumRegisterParameters);
 }
 
 CodeGenModule::~CodeGenModule() {}
@@ -536,8 +541,7 @@ void CodeGenModule::applyReplacements() {
   }
 }
 
-void CodeGenModule::addGlobalValReplacement(llvm::GlobalValue *GV,
-                                            llvm::Constant *C) {
+void CodeGenModule::addGlobalValReplacement(llvm::GlobalValue *GV, llvm::Constant *C) {
   GlobalValReplacements.push_back(std::make_pair(GV, C));
 }
 
@@ -574,9 +578,8 @@ static const llvm::GlobalValue *getAliasedGlobal(const llvm::GlobalValue *GV) {
 }
 
 static bool checkAliasedGlobal(
-    const ASTContext &Context, DiagnosticsEngine &Diags,
-    SourceLocation Location, bool IsIFunc, const llvm::GlobalValue *Alias,
-    const llvm::GlobalValue *&GV,
+    const ASTContext &Context, DiagnosticsEngine &Diags, SourceLocation Location,
+    bool IsIFunc, const llvm::GlobalValue *Alias, const llvm::GlobalValue *&GV,
     const llvm::MapVector<GlobalDecl, StringRef> &MangledDeclNames,
     SourceRange AliasRange) {
   GV = getAliasedGlobal(Alias);
@@ -601,7 +604,8 @@ static bool checkAliasedGlobal(
     // mangled name.
     for (const auto &[Decl, Name] : MangledDeclNames) {
       if (const auto *ND = dyn_cast<NamedDecl>(Decl.getDecl())) {
-        if (ND->getName() == GV->getName()) {
+        IdentifierInfo *II = ND->getIdentifier();
+        if (II && II->getName() == GV->getName()) {
           Diags.Report(Location, diag::note_alias_mangled_name_alternative)
               << Name
               << FixItHint::CreateReplacement(
@@ -720,6 +724,11 @@ void CodeGenModule::checkAliases() {
           cast<llvm::GlobalAlias>(Alias)->setAliasee(Aliasee);
       }
     }
+    // ifunc resolvers are usually implemented to run before sanitizer
+    // initialization. Disable instrumentation to prevent the ordering issue.
+    if (IsIFunc)
+      cast<llvm::Function>(Aliasee)->addFnAttr(
+          llvm::Attribute::DisableSanitizerInstrumentation);
   }
   if (!Error)
     return;
@@ -727,7 +736,7 @@ void CodeGenModule::checkAliases() {
   for (const GlobalDecl &GD : Aliases) {
     StringRef MangledName = getMangledName(GD);
     llvm::GlobalValue *Alias = GetGlobalValue(MangledName);
-    Alias->replaceAllUsesWith(llvm::UndefValue::get(Alias->getType()));
+    Alias->replaceAllUsesWith(llvm::PoisonValue::get(Alias->getType()));
     Alias->eraseFromParent();
   }
 }
@@ -750,8 +759,7 @@ void InstrProfStats::reportDiagnostics(DiagnosticsEngine &Diags,
     Diags.Report(diag::warn_profile_data_unprofiled) << MainFile;
   } else {
     if (Mismatched > 0)
-      Diags.Report(diag::warn_profile_data_out_of_date)
-          << Visited << Mismatched;
+      Diags.Report(diag::warn_profile_data_out_of_date) << Visited << Mismatched;
 
     if (Missing > 0)
       Diags.Report(diag::warn_profile_data_missing) << Visited << Missing;
@@ -774,8 +782,9 @@ getLLVMVisibility(clang::LangOptions::VisibilityFromDLLStorageClassKinds K) {
   llvm_unreachable("unknown option value!");
 }
 
-void setLLVMVisibility(llvm::GlobalValue &GV,
-                       std::optional<llvm::GlobalValue::VisibilityTypes> V) {
+static void
+setLLVMVisibility(llvm::GlobalValue &GV,
+                  std::optional<llvm::GlobalValue::VisibilityTypes> V) {
   if (!V)
     return;
 
@@ -905,7 +914,8 @@ void CodeGenModule::Release() {
   if (Context.getTargetInfo().getTriple().isWasm())
     EmitMainVoidAlias();
 
-  if (getTriple().isAMDGPU()) {
+  if (getTriple().isAMDGPU() ||
+      (getTriple().isSPIRV() && getTriple().getVendor() == llvm::Triple::AMD)) {
     // Emit amdhsa_code_object_version module flag, which is code object version
     // times 100.
     if (getTarget().getTargetOpts().CodeObjectVersion !=
@@ -981,16 +991,10 @@ void CodeGenModule::Release() {
   // usage of #pragma comment(lib, *) is intended for host libraries on
   // Windows. Therefore emit llvm.dependent-libraries only for host.
   if (!ELFDependentLibraries.empty() && !Context.getLangOpts().CUDAIsDevice) {
-    auto *NMD =
-        getModule().getOrInsertNamedMetadata("llvm.dependent-libraries");
+    auto *NMD = getModule().getOrInsertNamedMetadata("llvm.dependent-libraries");
     for (auto *MD : ELFDependentLibraries)
       NMD->addOperand(MD);
   }
-
-  // Record mregparm value now so it is visible through rest of codegen.
-  if (Context.getTargetInfo().getTriple().getArch() == llvm::Triple::x86)
-    getModule().addModuleFlag(llvm::Module::Error, "NumRegisterParameters",
-                              CodeGenOpts.NumRegisterParameters);
 
   if (CodeGenOpts.DwarfVersion) {
     getModule().addModuleFlag(llvm::Module::Max, "Dwarf Version",
@@ -1031,12 +1035,12 @@ void CodeGenModule::Release() {
     // FIXME: we could support it by stripping all the information introduced
     // by StrictVTablePointers.
 
-    getModule().addModuleFlag(llvm::Module::Error, "StrictVTablePointers", 1);
+    getModule().addModuleFlag(llvm::Module::Error, "StrictVTablePointers",1);
 
     llvm::Metadata *Ops[2] = {
-        llvm::MDString::get(VMContext, "StrictVTablePointers"),
-        llvm::ConstantAsMetadata::get(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(VMContext), 1))};
+              llvm::MDString::get(VMContext, "StrictVTablePointers"),
+              llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                  llvm::Type::getInt32Ty(VMContext), 1))};
 
     getModule().addModuleFlag(llvm::Module::Require,
                               "StrictVTablePointersRequirement",
@@ -1132,6 +1136,11 @@ void CodeGenModule::Release() {
                               CodeGenOpts.SanitizeCfiCanonicalJumpTables);
   }
 
+  if (CodeGenOpts.SanitizeCfiICallNormalizeIntegers) {
+    getModule().addModuleFlag(llvm::Module::Override, "cfi-normalize-integers",
+                              1);
+  }
+
   if (LangOpts.Sanitize.has(SanitizerKind::KCFI)) {
     getModule().addModuleFlag(llvm::Module::Override, "kcfi", 1);
     // KCFI assumes patchable-function-prefix is the same for all indirectly
@@ -1144,22 +1153,32 @@ void CodeGenModule::Release() {
   if (CodeGenOpts.CFProtectionReturn &&
       Target.checkCFProtectionReturnSupported(getDiags())) {
     // Indicate that we want to instrument return control flow protection.
-    getModule().addModuleFlag(llvm::Module::Min, "cf-protection-return", 1);
+    getModule().addModuleFlag(llvm::Module::Min, "cf-protection-return",
+                              1);
   }
 
   if (CodeGenOpts.CFProtectionBranch &&
       Target.checkCFProtectionBranchSupported(getDiags())) {
     // Indicate that we want to instrument branch control flow protection.
-    getModule().addModuleFlag(llvm::Module::Min, "cf-protection-branch", 1);
+    getModule().addModuleFlag(llvm::Module::Min, "cf-protection-branch",
+                              1);
+
+    auto Scheme = CodeGenOpts.getCFBranchLabelScheme();
+    if (Target.checkCFBranchLabelSchemeSupported(Scheme, getDiags())) {
+      if (Scheme == CFBranchLabelSchemeKind::Default)
+        Scheme = Target.getDefaultCFBranchLabelScheme();
+      getModule().addModuleFlag(
+          llvm::Module::Error, "cf-branch-label-scheme",
+          llvm::MDString::get(getLLVMContext(),
+                              getCFBranchLabelSchemeFlagVal(Scheme)));
+    }
   }
 
   if (CodeGenOpts.FunctionReturnThunks)
-    getModule().addModuleFlag(llvm::Module::Override,
-                              "function_return_thunk_extern", 1);
+    getModule().addModuleFlag(llvm::Module::Override, "function_return_thunk_extern", 1);
 
   if (CodeGenOpts.IndirectBranchCSPrefix)
-    getModule().addModuleFlag(llvm::Module::Override,
-                              "indirect_branch_cs_prefix", 1);
+    getModule().addModuleFlag(llvm::Module::Override, "indirect_branch_cs_prefix", 1);
 
   // Add module metadata for return address signing (ignoring
   // non-leaf/all) and stack tagging. These are actually turned on by function
@@ -1196,6 +1215,50 @@ void CodeGenModule::Release() {
     if (!LangOpts.isSignReturnAddressWithAKey())
       getModule().addModuleFlag(llvm::Module::Min,
                                 "sign-return-address-with-bkey", 1);
+
+    if (LangOpts.PointerAuthELFGOT)
+      getModule().addModuleFlag(llvm::Module::Min, "ptrauth-elf-got", 1);
+
+    if (getTriple().isOSLinux()) {
+      assert(getTriple().isOSBinFormatELF());
+      using namespace llvm::ELF;
+      uint64_t PAuthABIVersion =
+          (LangOpts.PointerAuthIntrinsics
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_INTRINSICS) |
+          (LangOpts.PointerAuthCalls
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_CALLS) |
+          (LangOpts.PointerAuthReturns
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_RETURNS) |
+          (LangOpts.PointerAuthAuthTraps
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_AUTHTRAPS) |
+          (LangOpts.PointerAuthVTPtrAddressDiscrimination
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_VPTRADDRDISCR) |
+          (LangOpts.PointerAuthVTPtrTypeDiscrimination
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_VPTRTYPEDISCR) |
+          (LangOpts.PointerAuthInitFini
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_INITFINI) |
+          (LangOpts.PointerAuthInitFiniAddressDiscrimination
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_INITFINIADDRDISC) |
+          (LangOpts.PointerAuthELFGOT
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_GOT) |
+          (LangOpts.PointerAuthIndirectGotos
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_GOTOS) |
+          (LangOpts.PointerAuthTypeInfoVTPtrDiscrimination
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_TYPEINFOVPTRDISCR) |
+          (LangOpts.PointerAuthFunctionTypeDiscrimination
+           << AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_FPTRTYPEDISCR);
+      static_assert(AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_FPTRTYPEDISCR ==
+                        AARCH64_PAUTH_PLATFORM_LLVM_LINUX_VERSION_LAST,
+                    "Update when new enum items are defined");
+      if (PAuthABIVersion != 0) {
+        getModule().addModuleFlag(llvm::Module::Error,
+                                  "aarch64-elf-pauthabi-platform",
+                                  AARCH64_PAUTH_PLATFORM_LLVM_LINUX);
+        getModule().addModuleFlag(llvm::Module::Error,
+                                  "aarch64-elf-pauthabi-version",
+                                  PAuthABIVersion);
+      }
+    }
   }
 
   if (CodeGenOpts.StackClashProtector)
@@ -1244,10 +1307,10 @@ void CodeGenModule::Release() {
       // OpenCL.
       auto Version = LangOpts.getOpenCLCompatibleVersion();
       llvm::Metadata *SPIRVerElts[] = {
-          llvm::ConstantAsMetadata::get(
-              llvm::ConstantInt::get(Int32Ty, Version / 100)),
-          llvm::ConstantAsMetadata::get(
-              llvm::ConstantInt::get(Int32Ty, (Version / 100 > 1) ? 0 : 2))};
+          llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+              Int32Ty, Version / 100)),
+          llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+              Int32Ty, (Version / 100 > 1) ? 0 : 2))};
       llvm::NamedMDNode *SPIRVerMD =
           TheModule.getOrInsertNamedMetadata("opencl.spir.version");
       llvm::LLVMContext &Ctx = TheModule.getContext();
@@ -1268,15 +1331,14 @@ void CodeGenModule::Release() {
 
   if (getCodeGenOpts().CodeModel.size() > 0) {
     unsigned CM = llvm::StringSwitch<unsigned>(getCodeGenOpts().CodeModel)
-                      .Case("tiny", llvm::CodeModel::Tiny)
-                      .Case("small", llvm::CodeModel::Small)
-                      .Case("kernel", llvm::CodeModel::Kernel)
-                      .Case("medium", llvm::CodeModel::Medium)
-                      .Case("large", llvm::CodeModel::Large)
-                      .Default(~0u);
+                  .Case("tiny", llvm::CodeModel::Tiny)
+                  .Case("small", llvm::CodeModel::Small)
+                  .Case("kernel", llvm::CodeModel::Kernel)
+                  .Case("medium", llvm::CodeModel::Medium)
+                  .Case("large", llvm::CodeModel::Large)
+                  .Default(~0u);
     if (CM != ~0u) {
-      llvm::CodeModel::Model codeModel =
-          static_cast<llvm::CodeModel::Model>(CM);
+      llvm::CodeModel::Model codeModel = static_cast<llvm::CodeModel::Model>(CM);
       getModule().setCodeModel(codeModel);
 
       if ((CM == llvm::CodeModel::Medium || CM == llvm::CodeModel::Large) &&
@@ -1301,6 +1363,9 @@ void CodeGenModule::Release() {
   switch (CodeGenOpts.getFramePointer()) {
   case CodeGenOptions::FramePointerKind::None:
     // 0 ("none") is the default.
+    break;
+  case CodeGenOptions::FramePointerKind::Reserved:
+    getModule().setFramePointer(llvm::FramePointerKind::Reserved);
     break;
   case CodeGenOptions::FramePointerKind::NonLeaf:
     getModule().setFramePointer(llvm::FramePointerKind::NonLeaf);
@@ -1364,22 +1429,45 @@ void CodeGenModule::Release() {
   // that might affect the DLL storage class or the visibility, and
   // before anything that might act on these.
   setVisibilityFromDLLStorageClass(LangOpts, getModule());
+
+  // Check the tail call symbols are truly undefined.
+  if (getTriple().isPPC() && !MustTailCallUndefinedGlobals.empty()) {
+    for (auto &I : MustTailCallUndefinedGlobals) {
+      if (!I.first->isDefined())
+        getDiags().Report(I.second, diag::err_ppc_impossible_musttail) << 2;
+      else {
+        StringRef MangledName = getMangledName(GlobalDecl(I.first));
+        llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
+        if (!Entry || Entry->isWeakForLinker() ||
+            Entry->isDeclarationForLinker())
+          getDiags().Report(I.second, diag::err_ppc_impossible_musttail) << 2;
+      }
+    }
+  }
 }
 
 void CodeGenModule::EmitOpenCLMetadata() {
   // SPIR v2.0 s2.13 - The OpenCL version used by the module is stored in the
   // opencl.ocl.version named metadata node.
-  // C++ for OpenCL has a distinct mapping for versions compatibile with OpenCL.
-  auto Version = LangOpts.getOpenCLCompatibleVersion();
-  llvm::Metadata *OCLVerElts[] = {
-      llvm::ConstantAsMetadata::get(
-          llvm::ConstantInt::get(Int32Ty, Version / 100)),
-      llvm::ConstantAsMetadata::get(
-          llvm::ConstantInt::get(Int32Ty, (Version % 100) / 10))};
-  llvm::NamedMDNode *OCLVerMD =
-      TheModule.getOrInsertNamedMetadata("opencl.ocl.version");
-  llvm::LLVMContext &Ctx = TheModule.getContext();
-  OCLVerMD->addOperand(llvm::MDNode::get(Ctx, OCLVerElts));
+  // C++ for OpenCL has a distinct mapping for versions compatible with OpenCL.
+  auto CLVersion = LangOpts.getOpenCLCompatibleVersion();
+
+  auto EmitVersion = [this](StringRef MDName, int Version) {
+    llvm::Metadata *OCLVerElts[] = {
+        llvm::ConstantAsMetadata::get(
+            llvm::ConstantInt::get(Int32Ty, Version / 100)),
+        llvm::ConstantAsMetadata::get(
+            llvm::ConstantInt::get(Int32Ty, (Version % 100) / 10))};
+    llvm::NamedMDNode *OCLVerMD = TheModule.getOrInsertNamedMetadata(MDName);
+    llvm::LLVMContext &Ctx = TheModule.getContext();
+    OCLVerMD->addOperand(llvm::MDNode::get(Ctx, OCLVerElts));
+  };
+
+  EmitVersion("opencl.ocl.version", CLVersion);
+  if (LangOpts.OpenCLCPlusPlus) {
+    // In addition to the OpenCL compatible version, emit the C++ version.
+    EmitVersion("opencl.cxx.version", LangOpts.OpenCLCPlusPlusVersion);
+  }
 }
 
 void CodeGenModule::EmitBackendOptionsMetadata(
@@ -1392,12 +1480,12 @@ void CodeGenModule::EmitBackendOptionsMetadata(
 
 void CodeGenModule::UpdateCompletedType(const TagDecl *TD) {
   // Make sure that this type is translated.
-  Types.UpdateCompletedType(TD);
+  getTypes().UpdateCompletedType(TD);
 }
 
 void CodeGenModule::RefreshTypeCacheForClass(const CXXRecordDecl *RD) {
   // Make sure that this type is translated.
-  Types.RefreshTypeCacheForClass(RD);
+  getTypes().RefreshTypeCacheForClass(RD);
 }
 
 llvm::MDNode *CodeGenModule::getTBAATypeInfo(QualType QTy) {
@@ -1507,6 +1595,11 @@ void CodeGenModule::ErrorUnsupported(const Decl *D, const char *Type) {
                                                "cannot compile this %0 yet");
   std::string Msg = Type;
   getDiags().Report(Context.getFullLoc(D->getLocation()), DiagID) << Msg;
+}
+
+void CodeGenModule::runWithSufficientStackSpace(SourceLocation Loc,
+                                                llvm::function_ref<void()> Fn) {
+  StackHandler.runWithSufficientStackSpace(Loc, Fn);
 }
 
 llvm::ConstantInt *CodeGenModule::getSize(CharUnits size) {
@@ -1765,7 +1858,8 @@ static void AppendCPUSpecificCPUDispatchMangling(const CodeGenModule &CGM,
 
 // Returns true if GD is a function decl with internal linkage and
 // needs a unique suffix after the mangled name.
-static bool isUniqueInternalLinkageDecl(GlobalDecl GD, CodeGenModule &CGM) {
+static bool isUniqueInternalLinkageDecl(GlobalDecl GD,
+                                        CodeGenModule &CGM) {
   const Decl *D = GD.getDecl();
   return !CGM.getModuleNameHash().empty() && isa<FunctionDecl>(D) &&
          (CGM.getFunctionLinkage(GD) == llvm::GlobalValue::InternalLinkage);
@@ -1826,18 +1920,24 @@ static std::string getMangledNameImpl(CodeGenModule &CGM, GlobalDecl GD,
         break;
       case MultiVersionKind::Target: {
         auto *Attr = FD->getAttr<TargetAttr>();
+        assert(Attr && "Expected TargetAttr to be present "
+                       "for attribute mangling");
         const ABIInfo &Info = CGM.getTargetCodeGenInfo().getABIInfo();
         Info.appendAttributeMangling(Attr, Out);
         break;
       }
       case MultiVersionKind::TargetVersion: {
         auto *Attr = FD->getAttr<TargetVersionAttr>();
+        assert(Attr && "Expected TargetVersionAttr to be present "
+                       "for attribute mangling");
         const ABIInfo &Info = CGM.getTargetCodeGenInfo().getABIInfo();
         Info.appendAttributeMangling(Attr, Out);
         break;
       }
       case MultiVersionKind::TargetClones: {
         auto *Attr = FD->getAttr<TargetClonesAttr>();
+        assert(Attr && "Expected TargetClonesAttr to be present "
+                       "for attribute mangling");
         unsigned Index = GD.getMultiVersionIndex();
         const ABIInfo &Info = CGM.getTargetCodeGenInfo().getABIInfo();
         Info.appendAttributeMangling(Attr, Index, Out);
@@ -1893,8 +1993,7 @@ void CodeGenModule::UpdateMultiVersionNames(GlobalDecl GD,
       auto Result = Manglings.insert(std::make_pair(OtherName, OtherGD));
       StringRef OtherNameRef = MangledDeclNames[OtherGD.getCanonicalDecl()] =
           Result.first->first();
-      // If this is the current decl is being created, make sure we update the
-      // name.
+      // If this is the current decl is being created, make sure we update the name.
       if (GD.getCanonicalDecl() == OtherGD.getCanonicalDecl())
         CurName = OtherNameRef;
       if (llvm::GlobalValue *Entry = GetGlobalValue(NonTargetName))
@@ -1951,6 +2050,15 @@ StringRef CodeGenModule::getMangledName(GlobalDecl GD) {
                  GD.getWithKernelReferenceKind(KernelReferenceKind::Kernel),
                  ND));
 
+  // This invariant should hold true in the future.
+  // Prior work:
+  // https://discourse.llvm.org/t/rfc-clang-diagnostic-for-demangling-failures/82835/8
+  // https://github.com/llvm/llvm-project/issues/111345
+  // assert((MangledName.startswith("_Z") || MangledName.startswith("?")) &&
+  //        !GD->hasAttr<AsmLabelAttr>() &&
+  //        llvm::demangle(MangledName) != MangledName &&
+  //        "LLVM demangler must demangle clang-generated names");
+
   auto Result = Manglings.insert(std::make_pair(MangledName, GD));
   return MangledDeclNames[CanonicalGD] = Result.first->first();
 }
@@ -1963,8 +2071,8 @@ StringRef CodeGenModule::getBlockMangledName(GlobalDecl GD,
   SmallString<256> Buffer;
   llvm::raw_svector_ostream Out(Buffer);
   if (!D)
-    MangleCtx.mangleGlobalBlock(
-        BD, dyn_cast_or_null<VarDecl>(initializedGlobalDecl.getDecl()), Out);
+    MangleCtx.mangleGlobalBlock(BD,
+      dyn_cast_or_null<VarDecl>(initializedGlobalDecl.getDecl()), Out);
   else if (const auto *CD = dyn_cast<CXXConstructorDecl>(D))
     MangleCtx.mangleCtorBlock(CD, GD.getCtorType(), BD, Out);
   else if (const auto *DD = dyn_cast<CXXDestructorDecl>(D))
@@ -2014,39 +2122,55 @@ void CodeGenModule::AddGlobalDtor(llvm::Function *Dtor, int Priority,
 }
 
 void CodeGenModule::EmitCtorList(CtorList &Fns, const char *GlobalName) {
-  if (Fns.empty())
-    return;
+  if (Fns.empty()) return;
 
-  // Ctor function type is void()*.
-  llvm::FunctionType *CtorFTy = llvm::FunctionType::get(VoidTy, false);
-  llvm::Type *CtorPFTy = llvm::PointerType::get(
-      CtorFTy, TheModule.getDataLayout().getProgramAddressSpace());
+  const PointerAuthSchema &InitFiniAuthSchema =
+      getCodeGenOpts().PointerAuth.InitFiniPointers;
 
-  // Get the type of a ctor entry, { i32, void ()*, i8* }.
-  llvm::StructType *CtorStructTy =
-      llvm::StructType::get(Int32Ty, CtorPFTy, VoidPtrTy);
+  // Ctor function type is ptr.
+  llvm::PointerType *PtrTy = llvm::PointerType::get(
+      getLLVMContext(), TheModule.getDataLayout().getProgramAddressSpace());
+
+  // Get the type of a ctor entry, { i32, ptr, ptr }.
+  llvm::StructType *CtorStructTy = llvm::StructType::get(Int32Ty, PtrTy, PtrTy);
 
   // Construct the constructor and destructor arrays.
-  ConstantInitBuilder builder(*this);
-  auto ctors = builder.beginArray(CtorStructTy);
+  ConstantInitBuilder Builder(*this);
+  auto Ctors = Builder.beginArray(CtorStructTy);
   for (const auto &I : Fns) {
-    auto ctor = ctors.beginStruct(CtorStructTy);
-    ctor.addInt(Int32Ty, I.Priority);
-    ctor.add(I.Initializer);
+    auto Ctor = Ctors.beginStruct(CtorStructTy);
+    Ctor.addInt(Int32Ty, I.Priority);
+    if (InitFiniAuthSchema) {
+      llvm::Constant *StorageAddress =
+          (InitFiniAuthSchema.isAddressDiscriminated()
+               ? llvm::ConstantExpr::getIntToPtr(
+                     llvm::ConstantInt::get(
+                         IntPtrTy,
+                         llvm::ConstantPtrAuth::AddrDiscriminator_CtorsDtors),
+                     PtrTy)
+               : nullptr);
+      llvm::Constant *SignedCtorPtr = getConstantSignedPointer(
+          I.Initializer, InitFiniAuthSchema.getKey(), StorageAddress,
+          llvm::ConstantInt::get(
+              SizeTy, InitFiniAuthSchema.getConstantDiscrimination()));
+      Ctor.add(SignedCtorPtr);
+    } else {
+      Ctor.add(I.Initializer);
+    }
     if (I.AssociatedData)
-      ctor.add(I.AssociatedData);
+      Ctor.add(I.AssociatedData);
     else
-      ctor.addNullPointer(VoidPtrTy);
-    ctor.finishAndAddTo(ctors);
+      Ctor.addNullPointer(PtrTy);
+    Ctor.finishAndAddTo(Ctors);
   }
 
-  auto list = ctors.finishAndCreateGlobal(GlobalName, getPointerAlign(),
+  auto List = Ctors.finishAndCreateGlobal(GlobalName, getPointerAlign(),
                                           /*constant*/ false,
                                           llvm::GlobalValue::AppendingLinkage);
 
   // The LTO linker doesn't seem to like it when we set an alignment
   // on appending variables.  Take it off as a workaround.
-  list->setAlignment(std::nullopt);
+  List->setAlignment(std::nullopt);
 
   Fns.clear();
 }
@@ -2065,8 +2189,7 @@ CodeGenModule::getFunctionLinkage(GlobalDecl GD) {
 
 llvm::ConstantInt *CodeGenModule::CreateCrossDsoCfiTypeId(llvm::Metadata *MD) {
   llvm::MDString *MDS = dyn_cast<llvm::MDString>(MD);
-  if (!MDS)
-    return nullptr;
+  if (!MDS) return nullptr;
 
   return llvm::ConstantInt::get(Int64Ty, llvm::MD5Hash(MDS->getString()));
 }
@@ -2108,7 +2231,7 @@ void CodeGenModule::SetLLVMFunctionAttributes(GlobalDecl GD,
   F->setCallingConv(static_cast<llvm::CallingConv::ID>(CallingConv));
 }
 
-static void removeImageAccessQualifier(std::string &TyName) {
+static void removeImageAccessQualifier(std::string& TyName) {
   std::string ReadOnlyQual("__read_only");
   std::string::size_type ReadOnlyPos = TyName.find(ReadOnlyQual);
   if (ReadOnlyPos != std::string::npos)
@@ -2294,7 +2417,8 @@ void CodeGenModule::GenKernelArgMetadata(llvm::Function *Fn,
   }
   if (getCodeGenOpts().EmitOpenCLArgMetadata ||
       getCodeGenOpts().HIPSaveKernelArgName)
-    Fn->setMetadata("kernel_arg_name", llvm::MDNode::get(VMContext, argNames));
+    Fn->setMetadata("kernel_arg_name",
+                    llvm::MDNode::get(VMContext, argNames));
 }
 
 /// Determines whether the language options require us to model
@@ -2304,12 +2428,10 @@ void CodeGenModule::GenKernelArgMetadata(llvm::Function *Fn,
 /// enables this.
 static bool hasUnwindExceptions(const LangOptions &LangOpts) {
   // If exceptions are completely disabled, obviously this is false.
-  if (!LangOpts.Exceptions)
-    return false;
+  if (!LangOpts.Exceptions) return false;
 
   // If C++ exceptions are enabled, this is true.
-  if (LangOpts.CXXExceptions)
-    return true;
+  if (LangOpts.CXXExceptions) return true;
 
   // If ObjC exceptions are enabled, this depends on the ABI.
   if (LangOpts.ObjCExceptions) {
@@ -2336,7 +2458,7 @@ SmallVector<const CXXRecordDecl *, 0>
 CodeGenModule::getMostBaseClasses(const CXXRecordDecl *RD) {
   llvm::SetVector<const CXXRecordDecl *> MostBases;
 
-  std::function<void(const CXXRecordDecl *)> CollectMostBases;
+  std::function<void (const CXXRecordDecl *)> CollectMostBases;
   CollectMostBases = [&](const CXXRecordDecl *RD) {
     if (RD->getNumBases() == 0)
       MostBases.insert(RD);
@@ -2377,11 +2499,14 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     B.addAttribute(llvm::Attribute::StackProtectReq);
 
   if (!D) {
+    // Non-entry HLSL functions must always be inlined.
+    if (getLangOpts().HLSL && !F->hasFnAttribute(llvm::Attribute::NoInline))
+      B.addAttribute(llvm::Attribute::AlwaysInline);
     // If we don't have a declaration to control inlining, the function isn't
     // explicitly marked as alwaysinline for semantic reasons, and inlining is
     // disabled, mark the function as noinline.
-    if (!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
-        CodeGenOpts.getInlining() == CodeGenOptions::OnlyAlwaysInlining)
+    else if (!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
+             CodeGenOpts.getInlining() == CodeGenOptions::OnlyAlwaysInlining)
       B.addAttribute(llvm::Attribute::NoInline);
 
     F->addFnAttrs(B);
@@ -2408,9 +2533,13 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   ShouldAddOptNone &= !D->hasAttr<MinSizeAttr>();
   ShouldAddOptNone &= !D->hasAttr<AlwaysInlineAttr>();
 
-  // Add optnone, but do so only if the function isn't always_inline.
-  if ((ShouldAddOptNone || D->hasAttr<OptimizeNoneAttr>()) &&
-      !F->hasFnAttribute(llvm::Attribute::AlwaysInline)) {
+  // Non-entry HLSL functions must always be inlined.
+  if (getLangOpts().HLSL && !F->hasFnAttribute(llvm::Attribute::NoInline) &&
+      !D->hasAttr<NoInlineAttr>()) {
+    B.addAttribute(llvm::Attribute::AlwaysInline);
+  } else if ((ShouldAddOptNone || D->hasAttr<OptimizeNoneAttr>()) &&
+             !F->hasFnAttribute(llvm::Attribute::AlwaysInline)) {
+    // Add optnone, but do so only if the function isn't always_inline.
     B.addAttribute(llvm::Attribute::OptimizeNone);
 
     // OptimizeNone implies noinline; we should not be inlining such functions.
@@ -2611,8 +2740,8 @@ bool CodeGenModule::GetCPUAndFeaturesAttributes(GlobalDecl GD,
     AddedAttr = true;
   }
   if (!Features.empty() && SetTargetFeatures) {
-    llvm::erase_if(Features, [&](const std::string &F) {
-      return getTarget().isReadOnlyFeature(F.substr(1));
+    llvm::erase_if(Features, [&](const std::string& F) {
+       return getTarget().isReadOnlyFeature(F.substr(1));
     });
     llvm::sort(Features);
     Attrs.addAttribute("target-features", llvm::join(Features, ","));
@@ -2785,10 +2914,10 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
   // GCC and does not actually return "this".
   if (!IsThunk && getCXXABI().HasThisReturn(GD) &&
       !(getTriple().isiOS() && getTriple().isOSVersionLT(6))) {
-    assert(
-        !F->arg_empty() &&
-        F->arg_begin()->getType()->canLosslesslyBitCastTo(F->getReturnType()) &&
-        "unexpected this return");
+    assert(!F->arg_empty() &&
+           F->arg_begin()->getType()
+             ->canLosslesslyBitCastTo(F->getReturnType()) &&
+           "unexpected this return");
     F->addParamAttr(0, llvm::Attribute::Returned);
   }
 
@@ -2805,7 +2934,7 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
   if (const auto *CSA = FD->getAttr<CodeSegAttr>())
     F->setSection(CSA->getName());
   else if (const auto *SA = FD->getAttr<SectionAttr>())
-    F->setSection(SA->getName());
+     F->setSection(SA->getName());
 
   if (const auto *EA = FD->getAttr<ErrorAttr>()) {
     if (EA->isError())
@@ -2852,8 +2981,7 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
     getOpenMPRuntime().emitDeclareSimdFunction(FD, F);
 
   if (CodeGenOpts.InlineMaxStackSize != UINT_MAX)
-    F->addFnAttr("inline-max-stacksize",
-                 llvm::utostr(CodeGenOpts.InlineMaxStackSize));
+    F->addFnAttr("inline-max-stacksize", llvm::utostr(CodeGenOpts.InlineMaxStackSize));
 
   if (const auto *CB = FD->getAttr<CallbackAttr>()) {
     // Annotate the callback behavior as metadata:
@@ -2901,11 +3029,12 @@ static void emitUsed(CodeGenModule &CGM, StringRef Name,
     return;
 
   // Convert List to what ConstantArray needs.
-  SmallVector<llvm::Constant *, 8> UsedArray;
+  SmallVector<llvm::Constant*, 8> UsedArray;
   UsedArray.resize(List.size());
   for (unsigned i = 0, e = List.size(); i != e; ++i) {
-    UsedArray[i] = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
-        cast<llvm::Constant>(&*List[i]), CGM.Int8PtrTy);
+    UsedArray[i] =
+        llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
+            cast<llvm::Constant>(&*List[i]), CGM.Int8PtrTy);
   }
 
   if (UsedArray.empty())
@@ -2941,7 +3070,7 @@ void CodeGenModule::AddDetectMismatch(StringRef Name, StringRef Value) {
 void CodeGenModule::AddDependentLib(StringRef Lib) {
   auto &C = getLLVMContext();
   if (getTarget().getTriple().isOSBinFormatELF()) {
-    ELFDependentLibraries.push_back(
+      ELFDependentLibraries.push_back(
         llvm::MDNode::get(C, llvm::MDString::get(C, Lib)));
     return;
   }
@@ -3140,8 +3269,8 @@ void CodeGenModule::EmitDeferred() {
     // to get GlobalValue with exactly the type we need, not something that
     // might had been created for another decl with the same mangled name but
     // different type.
-    llvm::GlobalValue *GV =
-        dyn_cast<llvm::GlobalValue>(GetAddrOfGlobal(D, ForDefinition));
+    llvm::GlobalValue *GV = dyn_cast<llvm::GlobalValue>(
+        GetAddrOfGlobal(D, ForDefinition));
 
     // In case of different address spaces, we may still get a cast, even with
     // IsForDefinition equal to true. Query mangled names table to get
@@ -3184,9 +3313,8 @@ void CodeGenModule::EmitVTablesOpportunistically() {
   // is not allowed to create new references to things that need to be emitted
   // lazily. Note that it also uses fact that we eagerly emitting RTTI.
 
-  assert(
-      (OpportunisticVTables.empty() || shouldOpportunisticallyEmitVTables()) &&
-      "Only emit opportunistic vtables with optimizations");
+  assert((OpportunisticVTables.empty() || shouldOpportunisticallyEmitVTables())
+         && "Only emit opportunistic vtables with optimizations");
 
   for (const CXXRecordDecl *RD : OpportunisticVTables) {
     assert(getVTables().isVTableExternal(RD) &&
@@ -3198,7 +3326,7 @@ void CodeGenModule::EmitVTablesOpportunistically() {
 }
 
 void CodeGenModule::EmitGlobalAnnotations() {
-  for (const auto &[MangledName, VD] : DeferredAnnotations) {
+  for (const auto& [MangledName, VD] : DeferredAnnotations) {
     llvm::GlobalValue *GV = GetGlobalValue(MangledName);
     if (GV)
       AddGlobalAnnotations(VD, GV);
@@ -3209,9 +3337,8 @@ void CodeGenModule::EmitGlobalAnnotations() {
     return;
 
   // Create a new global variable for the ConstantStruct in the Module.
-  llvm::Constant *Array = llvm::ConstantArray::get(
-      llvm::ArrayType::get(Annotations[0]->getType(), Annotations.size()),
-      Annotations);
+  llvm::Constant *Array = llvm::ConstantArray::get(llvm::ArrayType::get(
+    Annotations[0]->getType(), Annotations.size()), Annotations);
   auto *gv = new llvm::GlobalVariable(getModule(), Array->getType(), false,
                                       llvm::GlobalValue::AppendingLinkage,
                                       Array, "llvm.global.annotations");
@@ -3246,8 +3373,8 @@ llvm::Constant *CodeGenModule::EmitAnnotationUnit(SourceLocation Loc) {
 llvm::Constant *CodeGenModule::EmitAnnotationLineNo(SourceLocation L) {
   SourceManager &SM = getContext().getSourceManager();
   PresumedLoc PLoc = SM.getPresumedLoc(L);
-  unsigned LineNo =
-      PLoc.isValid() ? PLoc.getLine() : SM.getExpansionLineNumber(L);
+  unsigned LineNo = PLoc.isValid() ? PLoc.getLine() :
+    SM.getExpansionLineNumber(L);
   return llvm::ConstantInt::get(Int32Ty, LineNo);
 }
 
@@ -3591,7 +3718,7 @@ ConstantAddress CodeGenModule::GetAddrOfTemplateParamObject(
 
   ConstantEmitter Emitter(*this);
   llvm::Constant *Init = Emitter.emitForInitializer(
-      TPO->getValue(), TPO->getType().getAddressSpace(), TPO->getType());
+        TPO->getValue(), TPO->getType().getAddressSpace(), TPO->getType());
 
   if (!Init) {
     ErrorUnsupported(TPO, "template parameter object");
@@ -3609,7 +3736,7 @@ ConstantAddress CodeGenModule::GetAddrOfTemplateParamObject(
     GV->setComdat(TheModule.getOrInsertComdat(GV->getName()));
   Emitter.finalize(GV);
 
-  return ConstantAddress(GV, GV->getValueType(), Alignment);
+    return ConstantAddress(GV, GV->getValueType(), Alignment);
 }
 
 ConstantAddress CodeGenModule::GetWeakRefReference(const ValueDecl *VD) {
@@ -3648,6 +3775,19 @@ template <typename AttrT> static bool hasImplicitAttr(const ValueDecl *D) {
   return D->isImplicit();
 }
 
+bool CodeGenModule::shouldEmitCUDAGlobalVar(const VarDecl *Global) const {
+  assert(LangOpts.CUDA && "Should not be called by non-CUDA languages");
+  // We need to emit host-side 'shadows' for all global
+  // device-side variables because the CUDA runtime needs their
+  // size and host-side address in order to provide access to
+  // their device-side incarnations.
+  return !LangOpts.CUDAIsDevice || Global->hasAttr<CUDADeviceAttr>() ||
+         Global->hasAttr<CUDAConstantAttr>() ||
+         Global->hasAttr<CUDASharedAttr>() ||
+         Global->getType()->isCUDADeviceBuiltinSurfaceType() ||
+         Global->getType()->isCUDADeviceBuiltinTextureType();
+}
+
 void CodeGenModule::EmitGlobal(GlobalDecl GD) {
   const auto *Global = cast<ValueDecl>(GD.getDecl());
 
@@ -3672,36 +3812,27 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
   // Non-constexpr non-lambda implicit host device functions are not emitted
   // unless they are used on device side.
   if (LangOpts.CUDA) {
-    if (LangOpts.CUDAIsDevice) {
+    assert((isa<FunctionDecl>(Global) || isa<VarDecl>(Global)) &&
+           "Expected Variable or Function");
+    if (const auto *VD = dyn_cast<VarDecl>(Global)) {
+      if (!shouldEmitCUDAGlobalVar(VD))
+        return;
+    } else if (LangOpts.CUDAIsDevice) {
       const auto *FD = dyn_cast<FunctionDecl>(Global);
       if ((!Global->hasAttr<CUDADeviceAttr>() ||
-           (LangOpts.OffloadImplicitHostDeviceTemplates && FD &&
+           (LangOpts.OffloadImplicitHostDeviceTemplates &&
             hasImplicitAttr<CUDAHostAttr>(FD) &&
             hasImplicitAttr<CUDADeviceAttr>(FD) && !FD->isConstexpr() &&
             !isLambdaCallOperator(FD) &&
             !getContext().CUDAImplicitHostDeviceFunUsedByDevice.count(FD))) &&
           !Global->hasAttr<CUDAGlobalAttr>() &&
-          !Global->hasAttr<CUDAConstantAttr>() &&
-          !Global->hasAttr<CUDASharedAttr>() &&
-          !Global->getType()->isCUDADeviceBuiltinSurfaceType() &&
-          !Global->getType()->isCUDADeviceBuiltinTextureType() &&
           !(LangOpts.HIPStdPar && isa<FunctionDecl>(Global) &&
             !Global->hasAttr<CUDAHostAttr>()))
         return;
-    } else {
-      // We need to emit host-side 'shadows' for all global
-      // device-side variables because the CUDA runtime needs their
-      // size and host-side address in order to provide access to
-      // their device-side incarnations.
-
-      // So device-only functions are the only things we skip.
-      if (isa<FunctionDecl>(Global) && !Global->hasAttr<CUDAHostAttr>() &&
-          Global->hasAttr<CUDADeviceAttr>())
-        return;
-
-      assert((isa<FunctionDecl>(Global) || isa<VarDecl>(Global)) &&
-             "Expected Variable or Function");
-    }
+      // Device-only functions are the only things we skip.
+    } else if (!Global->hasAttr<CUDAHostAttr>() &&
+               Global->hasAttr<CUDADeviceAttr>())
+      return;
   }
 
   if (LangOpts.OpenMP) {
@@ -3733,8 +3864,7 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
     // Forward declarations are emitted lazily on first use.
     if (!FD->doesThisDeclarationHaveABody()) {
       if (!FD->doesDeclarationForceExternallyVisibleDefinition() &&
-          (!FD->isMultiVersion() ||
-           !FD->getASTContext().getTargetInfo().getTriple().isAArch64()))
+          (!FD->isMultiVersion() || !getTarget().getTriple().isAArch64()))
         return;
 
       StringRef MangledName = getMangledName(GD);
@@ -3835,107 +3965,108 @@ static bool HasNonDllImportDtor(QualType T) {
 }
 
 namespace {
-struct FunctionIsDirectlyRecursive
-    : public ConstStmtVisitor<FunctionIsDirectlyRecursive, bool> {
-  const StringRef Name;
-  const Builtin::Context &BI;
-  FunctionIsDirectlyRecursive(StringRef N, const Builtin::Context &C)
-      : Name(N), BI(C) {}
+  struct FunctionIsDirectlyRecursive
+      : public ConstStmtVisitor<FunctionIsDirectlyRecursive, bool> {
+    const StringRef Name;
+    const Builtin::Context &BI;
+    FunctionIsDirectlyRecursive(StringRef N, const Builtin::Context &C)
+        : Name(N), BI(C) {}
 
-  bool VisitCallExpr(const CallExpr *E) {
-    const FunctionDecl *FD = E->getDirectCallee();
-    if (!FD)
-      return false;
-    AsmLabelAttr *Attr = FD->getAttr<AsmLabelAttr>();
-    if (Attr && Name == Attr->getLabel())
-      return true;
-    unsigned BuiltinID = FD->getBuiltinID();
-    if (!BuiltinID || !BI.isLibFunction(BuiltinID))
-      return false;
-    StringRef BuiltinName = BI.getName(BuiltinID);
-    if (BuiltinName.starts_with("__builtin_") &&
-        Name == BuiltinName.slice(strlen("__builtin_"), StringRef::npos)) {
-      return true;
-    }
-    return false;
-  }
-
-  bool VisitStmt(const Stmt *S) {
-    for (const Stmt *Child : S->children())
-      if (Child && this->Visit(Child))
+    bool VisitCallExpr(const CallExpr *E) {
+      const FunctionDecl *FD = E->getDirectCallee();
+      if (!FD)
+        return false;
+      AsmLabelAttr *Attr = FD->getAttr<AsmLabelAttr>();
+      if (Attr && Name == Attr->getLabel())
         return true;
-    return false;
-  }
-};
+      unsigned BuiltinID = FD->getBuiltinID();
+      if (!BuiltinID || !BI.isLibFunction(BuiltinID))
+        return false;
+      StringRef BuiltinName = BI.getName(BuiltinID);
+      if (BuiltinName.starts_with("__builtin_") &&
+          Name == BuiltinName.slice(strlen("__builtin_"), StringRef::npos)) {
+        return true;
+      }
+      return false;
+    }
 
-// Make sure we're not referencing non-imported vars or functions.
-struct DLLImportFunctionVisitor
-    : public RecursiveASTVisitor<DLLImportFunctionVisitor> {
-  bool SafeToInline = true;
+    bool VisitStmt(const Stmt *S) {
+      for (const Stmt *Child : S->children())
+        if (Child && this->Visit(Child))
+          return true;
+      return false;
+    }
+  };
 
-  bool shouldVisitImplicitCode() const { return true; }
+  // Make sure we're not referencing non-imported vars or functions.
+  struct DLLImportFunctionVisitor
+      : public RecursiveASTVisitor<DLLImportFunctionVisitor> {
+    bool SafeToInline = true;
 
-  bool VisitVarDecl(VarDecl *VD) {
-    if (VD->getTLSKind()) {
-      // A thread-local variable cannot be imported.
-      SafeToInline = false;
+    bool shouldVisitImplicitCode() const { return true; }
+
+    bool VisitVarDecl(VarDecl *VD) {
+      if (VD->getTLSKind()) {
+        // A thread-local variable cannot be imported.
+        SafeToInline = false;
+        return SafeToInline;
+      }
+
+      // A variable definition might imply a destructor call.
+      if (VD->isThisDeclarationADefinition())
+        SafeToInline = !HasNonDllImportDtor(VD->getType());
+
       return SafeToInline;
     }
 
-    // A variable definition might imply a destructor call.
-    if (VD->isThisDeclarationADefinition())
-      SafeToInline = !HasNonDllImportDtor(VD->getType());
-
-    return SafeToInline;
-  }
-
-  bool VisitCXXBindTemporaryExpr(CXXBindTemporaryExpr *E) {
-    if (const auto *D = E->getTemporary()->getDestructor())
-      SafeToInline = D->hasAttr<DLLImportAttr>();
-    return SafeToInline;
-  }
-
-  bool VisitDeclRefExpr(DeclRefExpr *E) {
-    ValueDecl *VD = E->getDecl();
-    if (isa<FunctionDecl>(VD))
-      SafeToInline = VD->hasAttr<DLLImportAttr>();
-    else if (VarDecl *V = dyn_cast<VarDecl>(VD))
-      SafeToInline = !V->hasGlobalStorage() || V->hasAttr<DLLImportAttr>();
-    return SafeToInline;
-  }
-
-  bool VisitCXXConstructExpr(CXXConstructExpr *E) {
-    SafeToInline = E->getConstructor()->hasAttr<DLLImportAttr>();
-    return SafeToInline;
-  }
-
-  bool VisitCXXMemberCallExpr(CXXMemberCallExpr *E) {
-    CXXMethodDecl *M = E->getMethodDecl();
-    if (!M) {
-      // Call through a pointer to member function. This is safe to inline.
-      SafeToInline = true;
-    } else {
-      SafeToInline = M->hasAttr<DLLImportAttr>();
+    bool VisitCXXBindTemporaryExpr(CXXBindTemporaryExpr *E) {
+      if (const auto *D = E->getTemporary()->getDestructor())
+        SafeToInline = D->hasAttr<DLLImportAttr>();
+      return SafeToInline;
     }
-    return SafeToInline;
-  }
 
-  bool VisitCXXDeleteExpr(CXXDeleteExpr *E) {
-    SafeToInline = E->getOperatorDelete()->hasAttr<DLLImportAttr>();
-    return SafeToInline;
-  }
+    bool VisitDeclRefExpr(DeclRefExpr *E) {
+      ValueDecl *VD = E->getDecl();
+      if (isa<FunctionDecl>(VD))
+        SafeToInline = VD->hasAttr<DLLImportAttr>();
+      else if (VarDecl *V = dyn_cast<VarDecl>(VD))
+        SafeToInline = !V->hasGlobalStorage() || V->hasAttr<DLLImportAttr>();
+      return SafeToInline;
+    }
 
-  bool VisitCXXNewExpr(CXXNewExpr *E) {
-    SafeToInline = E->getOperatorNew()->hasAttr<DLLImportAttr>();
-    return SafeToInline;
-  }
-};
-} // namespace
+    bool VisitCXXConstructExpr(CXXConstructExpr *E) {
+      SafeToInline = E->getConstructor()->hasAttr<DLLImportAttr>();
+      return SafeToInline;
+    }
+
+    bool VisitCXXMemberCallExpr(CXXMemberCallExpr *E) {
+      CXXMethodDecl *M = E->getMethodDecl();
+      if (!M) {
+        // Call through a pointer to member function. This is safe to inline.
+        SafeToInline = true;
+      } else {
+        SafeToInline = M->hasAttr<DLLImportAttr>();
+      }
+      return SafeToInline;
+    }
+
+    bool VisitCXXDeleteExpr(CXXDeleteExpr *E) {
+      SafeToInline = E->getOperatorDelete()->hasAttr<DLLImportAttr>();
+      return SafeToInline;
+    }
+
+    bool VisitCXXNewExpr(CXXNewExpr *E) {
+      SafeToInline = E->getOperatorNew()->hasAttr<DLLImportAttr>();
+      return SafeToInline;
+    }
+  };
+}
 
 // isTriviallyRecursive - Check if this function calls another
 // decl that, because of the asm attribute or the other decl being a builtin,
 // ends up pointing to itself.
-bool CodeGenModule::isTriviallyRecursive(const FunctionDecl *FD) {
+bool
+CodeGenModule::isTriviallyRecursive(const FunctionDecl *FD) {
   StringRef Name;
   if (getCXXABI().getMangleContext().shouldMangleDeclName(FD)) {
     // asm labels are a special kind of mangling we have to support.
@@ -3957,6 +4088,11 @@ bool CodeGenModule::shouldEmitFunction(GlobalDecl GD) {
     return true;
 
   const auto *F = cast<FunctionDecl>(GD.getDecl());
+  // Inline builtins declaration must be emitted. They often are fortified
+  // functions.
+  if (F->isInlineBuiltinDeclaration())
+    return true;
+
   if (CodeGenOpts.OptimizationLevel == 0 && !F->hasAttr<AlwaysInlineAttr>())
     return false;
 
@@ -3985,7 +4121,7 @@ bool CodeGenModule::shouldEmitFunction(GlobalDecl GD) {
   if (F->hasAttr<DLLImportAttr>() && !F->hasAttr<AlwaysInlineAttr>()) {
     // Check whether it would be safe to inline this dllimport function.
     DLLImportFunctionVisitor Visitor;
-    Visitor.TraverseFunctionDecl(const_cast<FunctionDecl *>(F));
+    Visitor.TraverseFunctionDecl(const_cast<FunctionDecl*>(F));
     if (!Visitor.SafeToInline)
       return false;
 
@@ -4001,11 +4137,6 @@ bool CodeGenModule::shouldEmitFunction(GlobalDecl GD) {
           return false;
     }
   }
-
-  // Inline builtins declaration must be emitted. They often are fortified
-  // functions.
-  if (F->isInlineBuiltinDeclaration())
-    return true;
 
   // PR9614. Avoid cases where the source code is lying to us. An available
   // externally function should have an equivalent function somewhere else,
@@ -4095,23 +4226,12 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
 static void ReplaceUsesOfNonProtoTypeWithRealFunction(llvm::GlobalValue *Old,
                                                       llvm::Function *NewFn);
 
-static unsigned
-TargetMVPriority(const TargetInfo &TI,
-                 const CodeGenFunction::MultiVersionResolverOption &RO) {
-  unsigned Priority = 0;
-  unsigned NumFeatures = 0;
-  for (StringRef Feat : RO.Conditions.Features) {
-    Priority = std::max(Priority, TI.multiVersionSortPriority(Feat));
-    NumFeatures++;
-  }
-
-  if (!RO.Conditions.Architecture.empty())
-    Priority = std::max(
-        Priority, TI.multiVersionSortPriority(RO.Conditions.Architecture));
-
-  Priority += TI.multiVersionFeatureCost() * NumFeatures;
-
-  return Priority;
+static unsigned getFMVPriority(const TargetInfo &TI,
+                               const CodeGenFunction::FMVResolverOption &RO) {
+  llvm::SmallVector<StringRef, 8> Features{RO.Features};
+  if (RO.Architecture)
+    Features.push_back(*RO.Architecture);
+  return TI.getFMVPriority(Features);
 }
 
 // Multiversion functions should be at most 'WeakODRLinkage' so that a different
@@ -4119,29 +4239,12 @@ TargetMVPriority(const TargetInfo &TI,
 // in the cases of CPUDispatch, this causes issues. This also makes sure we
 // work with internal linkage functions, so that the same function name can be
 // used with internal linkage in multiple TUs.
-llvm::GlobalValue::LinkageTypes getMultiversionLinkage(CodeGenModule &CGM,
-                                                       GlobalDecl GD) {
+static llvm::GlobalValue::LinkageTypes
+getMultiversionLinkage(CodeGenModule &CGM, GlobalDecl GD) {
   const FunctionDecl *FD = cast<FunctionDecl>(GD.getDecl());
   if (FD->getFormalLinkage() == Linkage::Internal)
     return llvm::GlobalValue::InternalLinkage;
   return llvm::GlobalValue::WeakODRLinkage;
-}
-
-static FunctionDecl *createDefaultTargetVersionFrom(const FunctionDecl *FD) {
-  DeclContext *DeclCtx = FD->getASTContext().getTranslationUnitDecl();
-  TypeSourceInfo *TInfo = FD->getTypeSourceInfo();
-  StorageClass SC = FD->getStorageClass();
-  DeclarationName Name = FD->getNameInfo().getName();
-
-  FunctionDecl *NewDecl =
-      FunctionDecl::Create(FD->getASTContext(), DeclCtx, FD->getBeginLoc(),
-                           FD->getEndLoc(), Name, TInfo->getType(), TInfo, SC);
-
-  NewDecl->setIsMultiVersion();
-  NewDecl->addAttr(TargetVersionAttr::CreateImplicit(
-      NewDecl->getASTContext(), "default", NewDecl->getSourceRange()));
-
-  return NewDecl;
 }
 
 void CodeGenModule::emitMultiVersionFunctions() {
@@ -4170,46 +4273,46 @@ void CodeGenModule::emitMultiVersionFunctions() {
       return cast<llvm::Function>(Func);
     };
 
-    bool HasDefaultDecl = !FD->isTargetVersionMultiVersion();
-    bool ShouldEmitResolver =
-        !getContext().getTargetInfo().getTriple().isAArch64();
-    SmallVector<CodeGenFunction::MultiVersionResolverOption, 10> Options;
+    // For AArch64, a resolver is only emitted if a function marked with
+    // target_version("default")) or target_clones() is present and defined
+    // in this TU. For other architectures it is always emitted.
+    bool ShouldEmitResolver = !getTarget().getTriple().isAArch64();
+    SmallVector<CodeGenFunction::FMVResolverOption, 10> Options;
 
     getContext().forEachMultiversionedFunctionVersion(
         FD, [&](const FunctionDecl *CurFD) {
           llvm::SmallVector<StringRef, 8> Feats;
+          bool IsDefined = CurFD->doesThisDeclarationHaveABody();
 
           if (const auto *TA = CurFD->getAttr<TargetAttr>()) {
-            TA->getAddedFeatures(Feats);
+            assert(getTarget().getTriple().isX86() && "Unsupported target");
+            TA->getX86AddedFeatures(Feats);
             llvm::Function *Func = createFunction(CurFD);
-            Options.emplace_back(Func, TA->getArchitecture(), Feats);
+            Options.emplace_back(Func, Feats, TA->getX86Architecture());
           } else if (const auto *TVA = CurFD->getAttr<TargetVersionAttr>()) {
-            bool HasDefaultDef = TVA->isDefaultVersion() &&
-                                 CurFD->doesThisDeclarationHaveABody();
-            HasDefaultDecl |= TVA->isDefaultVersion();
-            ShouldEmitResolver |= (CurFD->isUsed() || HasDefaultDef);
-            TVA->getFeatures(Feats);
+            if (TVA->isDefaultVersion() && IsDefined)
+              ShouldEmitResolver = true;
             llvm::Function *Func = createFunction(CurFD);
-            Options.emplace_back(Func, /*Architecture*/ "", Feats);
+            char Delim = getTarget().getTriple().isAArch64() ? '+' : ',';
+            TVA->getFeatures(Feats, Delim);
+            Options.emplace_back(Func, Feats);
           } else if (const auto *TC = CurFD->getAttr<TargetClonesAttr>()) {
-            ShouldEmitResolver |= CurFD->doesThisDeclarationHaveABody();
+            if (IsDefined)
+              ShouldEmitResolver = true;
             for (unsigned I = 0; I < TC->featuresStrs_size(); ++I) {
               if (!TC->isFirstOfVersion(I))
                 continue;
 
               llvm::Function *Func = createFunction(CurFD, I);
-              StringRef Architecture;
               Feats.clear();
-              if (getTarget().getTriple().isAArch64())
-                TC->getFeatures(Feats, I);
-              else {
-                StringRef Version = TC->getFeatureStr(I);
-                if (Version.starts_with("arch="))
-                  Architecture = Version.drop_front(sizeof("arch=") - 1);
-                else if (Version != "default")
-                  Feats.push_back(Version);
+              if (getTarget().getTriple().isX86()) {
+                TC->getX86Feature(Feats, I);
+                Options.emplace_back(Func, Feats, TC->getX86Architecture(I));
+              } else {
+                char Delim = getTarget().getTriple().isAArch64() ? '+' : ',';
+                TC->getFeatures(Feats, I, Delim);
+                Options.emplace_back(Func, Feats);
               }
-              Options.emplace_back(Func, Architecture, Feats);
             }
           } else
             llvm_unreachable("unexpected MultiVersionKind");
@@ -4218,18 +4321,11 @@ void CodeGenModule::emitMultiVersionFunctions() {
     if (!ShouldEmitResolver)
       continue;
 
-    if (!HasDefaultDecl) {
-      FunctionDecl *NewFD = createDefaultTargetVersionFrom(FD);
-      llvm::Function *Func = createFunction(NewFD);
-      llvm::SmallVector<StringRef, 1> Feats;
-      Options.emplace_back(Func, /*Architecture*/ "", Feats);
-    }
-
     llvm::Constant *ResolverConstant = GetOrCreateMultiVersionResolver(GD);
     if (auto *IFunc = dyn_cast<llvm::GlobalIFunc>(ResolverConstant)) {
       ResolverConstant = IFunc->getResolver();
-      if (FD->isTargetClonesMultiVersion() ||
-          FD->isTargetVersionMultiVersion()) {
+      if (FD->isTargetClonesMultiVersion() &&
+          !getTarget().getTriple().isAArch64()) {
         std::string MangledName = getMangledNameImpl(
             *this, GD, FD, /*OmitMultiVersionMangling=*/true);
         if (!GetGlobalValue(MangledName + ".ifunc")) {
@@ -4255,9 +4351,9 @@ void CodeGenModule::emitMultiVersionFunctions() {
 
     const TargetInfo &TI = getTarget();
     llvm::stable_sort(
-        Options, [&TI](const CodeGenFunction::MultiVersionResolverOption &LHS,
-                       const CodeGenFunction::MultiVersionResolverOption &RHS) {
-          return TargetMVPriority(TI, LHS) > TargetMVPriority(TI, RHS);
+        Options, [&TI](const CodeGenFunction::FMVResolverOption &LHS,
+                       const CodeGenFunction::FMVResolverOption &RHS) {
+          return getFMVPriority(TI, LHS) > getFMVPriority(TI, RHS);
         });
     CodeGenFunction CGF(*this);
     CGF.EmitMultiVersionResolver(ResolverFunc, Options);
@@ -4273,6 +4369,14 @@ void CodeGenModule::emitMultiVersionFunctions() {
   // deferred decls or the multiversion functions themselves are emitted.
   if (!MultiVersionFuncs.empty())
     emitMultiVersionFunctions();
+}
+
+static void replaceDeclarationWith(llvm::GlobalValue *Old,
+                                   llvm::Constant *New) {
+  assert(cast<llvm::Function>(Old)->isDeclaration() && "Not a declaration");
+  New->takeName(Old);
+  Old->replaceAllUsesWith(New);
+  Old->eraseFromParent();
 }
 
 void CodeGenModule::emitCPUDispatchDefinition(GlobalDecl GD) {
@@ -4295,7 +4399,8 @@ void CodeGenModule::emitCPUDispatchDefinition(GlobalDecl GD) {
         llvm::PointerType::get(DeclTy,
                                getTypes().getTargetAddressSpace(FD->getType())),
         false);
-  } else {
+  }
+  else {
     ResolverType = DeclTy;
     ResolverGD = GD;
   }
@@ -4307,7 +4412,7 @@ void CodeGenModule::emitCPUDispatchDefinition(GlobalDecl GD) {
     ResolverFunc->setComdat(
         getModule().getOrInsertComdat(ResolverFunc->getName()));
 
-  SmallVector<CodeGenFunction::MultiVersionResolverOption, 10> Options;
+  SmallVector<CodeGenFunction::FMVResolverOption, 10> Options;
   const TargetInfo &Target = getTarget();
   unsigned Index = 0;
   for (const IdentifierInfo *II : DD->cpus()) {
@@ -4327,10 +4432,10 @@ void CodeGenModule::emitCPUDispatchDefinition(GlobalDecl GD) {
         if (!ExistingDecl.getDecl())
           ExistingDecl = GD.getWithMultiVersionIndex(Index);
 
-        Func = GetOrCreateLLVMFunction(MangledName, DeclTy, ExistingDecl,
-                                       /*ForVTable=*/false, /*DontDefer=*/true,
-                                       /*IsThunk=*/false, llvm::AttributeList(),
-                                       ForDefinition);
+      Func = GetOrCreateLLVMFunction(
+          MangledName, DeclTy, ExistingDecl,
+          /*ForVTable=*/false, /*DontDefer=*/true,
+          /*IsThunk=*/false, llvm::AttributeList(), ForDefinition);
       }
     }
 
@@ -4341,25 +4446,23 @@ void CodeGenModule::emitCPUDispatchDefinition(GlobalDecl GD) {
     llvm::erase_if(Features, [&Target](StringRef Feat) {
       return !Target.validateCpuSupports(Feat);
     });
-    Options.emplace_back(cast<llvm::Function>(Func), StringRef{}, Features);
+    Options.emplace_back(cast<llvm::Function>(Func), Features);
     ++Index;
   }
 
-  llvm::stable_sort(
-      Options, [](const CodeGenFunction::MultiVersionResolverOption &LHS,
-                  const CodeGenFunction::MultiVersionResolverOption &RHS) {
-        return llvm::X86::getCpuSupportsMask(LHS.Conditions.Features) >
-               llvm::X86::getCpuSupportsMask(RHS.Conditions.Features);
-      });
+  llvm::stable_sort(Options, [](const CodeGenFunction::FMVResolverOption &LHS,
+                                const CodeGenFunction::FMVResolverOption &RHS) {
+    return llvm::X86::getCpuSupportsMask(LHS.Features) >
+           llvm::X86::getCpuSupportsMask(RHS.Features);
+  });
 
   // If the list contains multiple 'default' versions, such as when it contains
   // 'pentium' and 'generic', don't emit the call to the generic one (since we
   // always run on at least a 'pentium'). We do this by deleting the 'least
   // advanced' (read, lowest mangling letter).
-  while (Options.size() > 1 &&
-         llvm::all_of(llvm::X86::getCpuSupportsMask(
-                          (Options.end() - 2)->Conditions.Features),
-                      [](auto X) { return X == 0; })) {
+  while (Options.size() > 1 && llvm::all_of(llvm::X86::getCpuSupportsMask(
+                                                (Options.end() - 2)->Features),
+                                            [](auto X) { return X == 0; })) {
     StringRef LHSName = (Options.end() - 2)->Function->getName();
     StringRef RHSName = (Options.end() - 1)->Function->getName();
     if (LHSName.compare(RHSName) < 0)
@@ -4374,25 +4477,23 @@ void CodeGenModule::emitCPUDispatchDefinition(GlobalDecl GD) {
   if (getTarget().supportsIFunc()) {
     llvm::GlobalValue::LinkageTypes Linkage = getMultiversionLinkage(*this, GD);
     auto *IFunc = cast<llvm::GlobalValue>(GetOrCreateMultiVersionResolver(GD));
+    unsigned AS = IFunc->getType()->getPointerAddressSpace();
 
     // Fix up function declarations that were created for cpu_specific before
     // cpu_dispatch was known
     if (!isa<llvm::GlobalIFunc>(IFunc)) {
-      assert(cast<llvm::Function>(IFunc)->isDeclaration());
-      auto *GI = llvm::GlobalIFunc::create(DeclTy, 0, Linkage, "", ResolverFunc,
-                                           &getModule());
-      GI->takeName(IFunc);
-      IFunc->replaceAllUsesWith(GI);
-      IFunc->eraseFromParent();
+      auto *GI = llvm::GlobalIFunc::create(DeclTy, AS, Linkage, "",
+                                           ResolverFunc, &getModule());
+      replaceDeclarationWith(IFunc, GI);
       IFunc = GI;
     }
 
-    std::string AliasName =
-        getMangledNameImpl(*this, GD, FD, /*OmitMultiVersionMangling=*/true);
+    std::string AliasName = getMangledNameImpl(
+        *this, GD, FD, /*OmitMultiVersionMangling=*/true);
     llvm::Constant *AliasFunc = GetGlobalValue(AliasName);
     if (!AliasFunc) {
-      auto *GA = llvm::GlobalAlias::create(DeclTy, 0, Linkage, AliasName, IFunc,
-                                           &getModule());
+      auto *GA = llvm::GlobalAlias::create(DeclTy, AS, Linkage, AliasName,
+                                           IFunc, &getModule());
       SetCommonAttributes(GD, GA);
     }
   }
@@ -4413,7 +4514,8 @@ void CodeGenModule::AddDeferredMultiVersionResolverToEmit(GlobalDecl GD) {
 }
 
 /// If a dispatcher for the specified mangled name is not in the module, create
-/// and return an llvm Function with the specified type.
+/// and return it. The dispatcher is either an llvm Function with the specified
+/// type, or a global ifunc.
 llvm::Constant *CodeGenModule::GetOrCreateMultiVersionResolver(GlobalDecl GD) {
   const auto *FD = cast<FunctionDecl>(GD.getDecl());
   assert(FD && "Not a FunctionDecl?");
@@ -4441,8 +4543,17 @@ llvm::Constant *CodeGenModule::GetOrCreateMultiVersionResolver(GlobalDecl GD) {
     ResolverName += ".resolver";
   }
 
-  // If the resolver has already been created, just return it.
-  if (llvm::GlobalValue *ResolverGV = GetGlobalValue(ResolverName))
+  bool ShouldReturnIFunc =
+      getTarget().supportsIFunc() && !FD->isCPUSpecificMultiVersion();
+
+  // If the resolver has already been created, just return it. This lookup may
+  // yield a function declaration instead of a resolver on AArch64. That is
+  // because we didn't know whether a resolver will be generated when we first
+  // encountered a use of the symbol named after this resolver. Therefore,
+  // targets which support ifuncs should not return here unless we actually
+  // found an ifunc.
+  llvm::GlobalValue *ResolverGV = GetGlobalValue(ResolverName);
+  if (ResolverGV && (isa<llvm::GlobalIFunc>(ResolverGV) || !ShouldReturnIFunc))
     return ResolverGV;
 
   const CGFunctionInfo &FI = getTypes().arrangeGlobalDeclaration(GD);
@@ -4455,29 +4566,42 @@ llvm::Constant *CodeGenModule::GetOrCreateMultiVersionResolver(GlobalDecl GD) {
 
   // For cpu_specific, don't create an ifunc yet because we don't know if the
   // cpu_dispatch will be emitted in this translation unit.
-  if (getTarget().supportsIFunc() && !FD->isCPUSpecificMultiVersion()) {
-    llvm::Type *ResolverType = llvm::FunctionType::get(
-        llvm::PointerType::get(DeclTy,
-                               getTypes().getTargetAddressSpace(FD->getType())),
-        false);
+  if (ShouldReturnIFunc) {
+    unsigned AS = getTypes().getTargetAddressSpace(FD->getType());
+    llvm::Type *ResolverType =
+        llvm::FunctionType::get(llvm::PointerType::get(DeclTy, AS), false);
     llvm::Constant *Resolver = GetOrCreateLLVMFunction(
         MangledName + ".resolver", ResolverType, GlobalDecl{},
         /*ForVTable=*/false);
     llvm::GlobalIFunc *GIF =
-        llvm::GlobalIFunc::create(DeclTy, 0, getMultiversionLinkage(*this, GD),
+        llvm::GlobalIFunc::create(DeclTy, AS, getMultiversionLinkage(*this, GD),
                                   "", Resolver, &getModule());
     GIF->setName(ResolverName);
     SetCommonAttributes(FD, GIF);
-
+    if (ResolverGV)
+      replaceDeclarationWith(ResolverGV, GIF);
     return GIF;
   }
 
   llvm::Constant *Resolver = GetOrCreateLLVMFunction(
       ResolverName, DeclTy, GlobalDecl{}, /*ForVTable=*/false);
-  assert(isa<llvm::GlobalValue>(Resolver) &&
+  assert(isa<llvm::GlobalValue>(Resolver) && !ResolverGV &&
          "Resolver should be created for the first time");
   SetCommonAttributes(FD, cast<llvm::GlobalValue>(Resolver));
   return Resolver;
+}
+
+bool CodeGenModule::shouldDropDLLAttribute(const Decl *D,
+                                           const llvm::GlobalValue *GV) const {
+  auto SC = GV->getDLLStorageClass();
+  if (SC == llvm::GlobalValue::DefaultStorageClass)
+    return false;
+  const Decl *MRD = D->getMostRecentDecl();
+  return (((SC == llvm::GlobalValue::DLLImportStorageClass &&
+            !MRD->hasAttr<DLLImportAttr>()) ||
+           (SC == llvm::GlobalValue::DLLExportStorageClass &&
+            !MRD->hasAttr<DLLExportAttr>())) &&
+          !shouldMapVisibilityToDLLExport(cast<NamedDecl>(MRD)));
 }
 
 /// GetOrCreateLLVMFunction - If the specified mangled name is not in the
@@ -4493,6 +4617,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     ForDefinition_t IsForDefinition) {
   const Decl *D = GD.getDecl();
 
+  std::string NameWithoutMultiVersionMangling;
   // Any attempts to use a MultiVersion function should result in retrieving
   // the iFunc instead. Name Mangling will handle the rest of the changes.
   if (const FunctionDecl *FD = cast_or_null<FunctionDecl>(D)) {
@@ -4514,13 +4639,23 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
 
     if (FD->isMultiVersion()) {
       UpdateMultiVersionNames(GD, FD, MangledName);
-      if (FD->getASTContext().getTargetInfo().getTriple().isAArch64() &&
-          !FD->isUsed())
-        AddDeferredMultiVersionResolverToEmit(GD);
-      else if (!IsForDefinition)
-        return GetOrCreateMultiVersionResolver(GD);
+      if (!IsForDefinition) {
+        // On AArch64 we do not immediatelly emit an ifunc resolver when a
+        // function is used. Instead we defer the emission until we see a
+        // default definition. In the meantime we just reference the symbol
+        // without FMV mangling (it may or may not be replaced later).
+        if (getTarget().getTriple().isAArch64()) {
+          AddDeferredMultiVersionResolverToEmit(GD);
+          NameWithoutMultiVersionMangling = getMangledNameImpl(
+              *this, GD, FD, /*OmitMultiVersionMangling=*/true);
+        } else
+          return GetOrCreateMultiVersionResolver(GD);
+      }
     }
   }
+
+  if (!NameWithoutMultiVersionMangling.empty())
+    MangledName = NameWithoutMultiVersionMangling;
 
   // Lookup the entry, lazily creating it if necessary.
   llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
@@ -4532,8 +4667,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     }
 
     // Handle dropped DLL attributes.
-    if (D && !D->hasAttr<DLLImportAttr>() && !D->hasAttr<DLLExportAttr>() &&
-        !shouldMapVisibilityToDLLExport(cast_or_null<NamedDecl>(D))) {
+    if (D && shouldDropDLLAttribute(D, Entry)) {
       Entry->setDLLStorageClass(llvm::GlobalValue::DefaultStorageClass);
       setDSOLocal(Entry);
     }
@@ -4561,8 +4695,8 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     }
 
     // Make sure the result is of the correct type.
-    // (If function is requested for a definition, we always need to create a
-    // new function, not just return a bitcast.)
+    // (If function is requested for a definition, we always need to create a new
+    // function, not just return a bitcast.)
     if (!IsForDefinition)
       return Entry;
   }
@@ -4720,8 +4854,8 @@ llvm::Constant *CodeGenModule::GetFunctionStart(const ValueDecl *Decl) {
   return llvm::NoCFIValue::get(F);
 }
 
-static const FunctionDecl *GetRuntimeFunctionDecl(ASTContext &C,
-                                                  StringRef Name) {
+static const FunctionDecl *
+GetRuntimeFunctionDecl(ASTContext &C, StringRef Name) {
   TranslationUnitDecl *TUDecl = C.getTranslationUnitDecl();
   DeclContext *DC = TranslationUnitDecl::castToDeclContext(TUDecl);
 
@@ -4758,6 +4892,52 @@ static const FunctionDecl *GetRuntimeFunctionDecl(ASTContext &C,
   return nullptr;
 }
 
+static void setWindowsItaniumDLLImport(CodeGenModule &CGM, bool Local,
+                                       llvm::Function *F, StringRef Name) {
+  // In Windows Itanium environments, try to mark runtime functions
+  // dllimport. For Mingw and MSVC, don't. We don't really know if the user
+  // will link their standard library statically or dynamically. Marking
+  // functions imported when they are not imported can cause linker errors
+  // and warnings.
+  if (!Local && CGM.getTriple().isWindowsItaniumEnvironment() &&
+      !CGM.getCodeGenOpts().LTOVisibilityPublicStd) {
+    const FunctionDecl *FD = GetRuntimeFunctionDecl(CGM.getContext(), Name);
+    if (!FD || FD->hasAttr<DLLImportAttr>()) {
+      F->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
+      F->setLinkage(llvm::GlobalValue::ExternalLinkage);
+    }
+  }
+}
+
+llvm::FunctionCallee CodeGenModule::CreateRuntimeFunction(
+    QualType ReturnTy, ArrayRef<QualType> ArgTys, StringRef Name,
+    llvm::AttributeList ExtraAttrs, bool Local, bool AssumeConvergent) {
+  if (AssumeConvergent) {
+    ExtraAttrs =
+        ExtraAttrs.addFnAttribute(VMContext, llvm::Attribute::Convergent);
+  }
+
+  QualType FTy = Context.getFunctionType(ReturnTy, ArgTys,
+                                         FunctionProtoType::ExtProtoInfo());
+  const CGFunctionInfo &Info = getTypes().arrangeFreeFunctionType(
+      Context.getCanonicalType(FTy).castAs<FunctionProtoType>());
+  auto *ConvTy = getTypes().GetFunctionType(Info);
+  llvm::Constant *C = GetOrCreateLLVMFunction(
+      Name, ConvTy, GlobalDecl(), /*ForVTable=*/false,
+      /*DontDefer=*/false, /*IsThunk=*/false, ExtraAttrs);
+
+  if (auto *F = dyn_cast<llvm::Function>(C)) {
+    if (F->empty()) {
+      SetLLVMFunctionAttributes(GlobalDecl(), Info, F, /*IsThunk*/ false);
+      // FIXME: Set calling-conv properly in ExtProtoInfo
+      F->setCallingConv(getRuntimeCC());
+      setWindowsItaniumDLLImport(*this, Local, F, Name);
+      setDSOLocal(F);
+    }
+  }
+  return {ConvTy, C};
+}
+
 /// CreateRuntimeFunction - Create a new runtime function with the specified
 /// type and name.
 llvm::FunctionCallee
@@ -4769,28 +4949,21 @@ CodeGenModule::CreateRuntimeFunction(llvm::FunctionType *FTy, StringRef Name,
         ExtraAttrs.addFnAttribute(VMContext, llvm::Attribute::Convergent);
   }
 
-  llvm::Constant *C = GetOrCreateLLVMFunction(
-      Name, FTy, GlobalDecl(), /*ForVTable=*/false,
-      /*DontDefer=*/false, /*IsThunk=*/false, ExtraAttrs);
+  llvm::Constant *C =
+      GetOrCreateLLVMFunction(Name, FTy, GlobalDecl(), /*ForVTable=*/false,
+                              /*DontDefer=*/false, /*IsThunk=*/false,
+                              ExtraAttrs);
 
   if (auto *F = dyn_cast<llvm::Function>(C)) {
     if (F->empty()) {
       F->setCallingConv(getRuntimeCC());
-
-      // In Windows Itanium environments, try to mark runtime functions
-      // dllimport. For Mingw and MSVC, don't. We don't really know if the user
-      // will link their standard library statically or dynamically. Marking
-      // functions imported when they are not imported can cause linker errors
-      // and warnings.
-      if (!Local && getTriple().isWindowsItaniumEnvironment() &&
-          !getCodeGenOpts().LTOVisibilityPublicStd) {
-        const FunctionDecl *FD = GetRuntimeFunctionDecl(Context, Name);
-        if (!FD || FD->hasAttr<DLLImportAttr>()) {
-          F->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
-          F->setLinkage(llvm::GlobalValue::ExternalLinkage);
-        }
-      }
+      setWindowsItaniumDLLImport(*this, Local, F, Name);
       setDSOLocal(F);
+      // FIXME: We should use CodeGenModule::SetLLVMFunctionAttributes() instead
+      // of trying to approximate the attributes using the LLVM function
+      // signature.  The other overload of CreateRuntimeFunction does this; it
+      // should be used for new code.
+      markRegisterParameterAttributes(F);
     }
   }
 
@@ -4822,8 +4995,7 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName, llvm::Type *Ty,
     }
 
     // Handle dropped DLL attributes.
-    if (D && !D->hasAttr<DLLImportAttr>() && !D->hasAttr<DLLExportAttr>() &&
-        !shouldMapVisibilityToDLLExport(D))
+    if (D && shouldDropDLLAttribute(D, Entry))
       Entry->setDLLStorageClass(llvm::GlobalValue::DefaultStorageClass);
 
     if (LangOpts.OpenMP && !LangOpts.OpenMPSimd && D)
@@ -5051,8 +5223,8 @@ llvm::GlobalVariable *CodeGenModule::CreateOrReplaceCXXRuntimeVariable(
   }
 
   // Create a new variable.
-  GV = new llvm::GlobalVariable(getModule(), Ty, /*isConstant=*/true, Linkage,
-                                nullptr, Name);
+  GV = new llvm::GlobalVariable(getModule(), Ty, /*isConstant=*/true,
+                                Linkage, nullptr, Name);
 
   if (OldGV) {
     // Replace occurrences of the old variable if needed.
@@ -5080,9 +5252,9 @@ llvm::GlobalVariable *CodeGenModule::CreateOrReplaceCXXRuntimeVariable(
 /// normal requested type would be. If IsForDefinition is true, it is guaranteed
 /// that an actual global with type Ty will be returned, not conversion of a
 /// variable with the same mangled name but some other type.
-llvm::Constant *
-CodeGenModule::GetAddrOfGlobalVar(const VarDecl *D, llvm::Type *Ty,
-                                  ForDefinition_t IsForDefinition) {
+llvm::Constant *CodeGenModule::GetAddrOfGlobalVar(const VarDecl *D,
+                                                  llvm::Type *Ty,
+                                           ForDefinition_t IsForDefinition) {
   assert(D->hasGlobalStorage() && "Not a global variable");
   QualType ASTTy = D->getType();
   if (!Ty)
@@ -5095,8 +5267,9 @@ CodeGenModule::GetAddrOfGlobalVar(const VarDecl *D, llvm::Type *Ty,
 
 /// CreateRuntimeVariable - Create a new runtime global variable with the
 /// specified type and name.
-llvm::Constant *CodeGenModule::CreateRuntimeVariable(llvm::Type *Ty,
-                                                     StringRef Name) {
+llvm::Constant *
+CodeGenModule::CreateRuntimeVariable(llvm::Type *Ty,
+                                     StringRef Name) {
   LangAS AddrSpace = getContext().getLangOpts().OpenCL ? LangAS::opencl_global
                                                        : LangAS::Default;
   auto *Ret = GetOrCreateLLVMGlobal(Name, Ty, AddrSpace, nullptr);
@@ -5119,16 +5292,19 @@ void CodeGenModule::EmitTentativeDefinition(const VarDecl *D) {
   // If we have not seen a reference to this variable yet, place it into the
   // deferred declarations table to be emitted if needed later.
   if (!MustBeEmitted(D) && !GV) {
-    DeferredDecls[MangledName] = D;
-    return;
+      DeferredDecls[MangledName] = D;
+      return;
   }
 
   // The tentative definition is the only definition.
   EmitGlobalVarDefinition(D);
 }
 
-void CodeGenModule::EmitExternalDeclaration(const VarDecl *D) {
-  EmitExternalVarDeclaration(D);
+void CodeGenModule::EmitExternalDeclaration(const DeclaratorDecl *D) {
+  if (auto const *V = dyn_cast<const VarDecl>(D))
+    EmitExternalVarDeclaration(V);
+  if (auto const *FD = dyn_cast<const FunctionDecl>(D))
+    EmitExternalFunctionDeclaration(FD);
 }
 
 CharUnits CodeGenModule::GetTargetTypeStoreSize(llvm::Type *Ty) const {
@@ -5139,9 +5315,12 @@ CharUnits CodeGenModule::GetTargetTypeStoreSize(llvm::Type *Ty) const {
 LangAS CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D) {
   if (LangOpts.OpenCL) {
     LangAS AS = D ? D->getType().getAddressSpace() : LangAS::opencl_global;
-    assert(AS == LangAS::opencl_global || AS == LangAS::opencl_global_device ||
-           AS == LangAS::opencl_global_host || AS == LangAS::opencl_constant ||
-           AS == LangAS::opencl_local || AS >= LangAS::FirstTargetAddressSpace);
+    assert(AS == LangAS::opencl_global ||
+           AS == LangAS::opencl_global_device ||
+           AS == LangAS::opencl_global_host ||
+           AS == LangAS::opencl_constant ||
+           AS == LangAS::opencl_local ||
+           AS >= LangAS::FirstTargetAddressSpace);
     return AS;
   }
 
@@ -5214,7 +5393,7 @@ castStringLiteralToDefaultAddressSpace(CodeGenModule &CGM,
   return Cast;
 }
 
-template <typename SomeDecl>
+template<typename SomeDecl>
 void CodeGenModule::MaybeHandleStaticInExternC(const SomeDecl *D,
                                                llvm::GlobalValue *GV) {
   if (!getLangOpts().CPlusPlus)
@@ -5283,6 +5462,10 @@ void CodeGenModule::maybeSetTrivialComdat(const Decl &D,
   GO.setComdat(TheModule.getOrInsertComdat(GO.getName()));
 }
 
+const ABIInfo &CodeGenModule::getABIInfo() {
+  return getTargetCodeGenInfo().getABIInfo();
+}
+
 /// Pass IsTentative as true if you want to create a tentative definition.
 void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
                                             bool IsTentative) {
@@ -5308,6 +5491,18 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   bool NeedsGlobalDtor =
       !IsDefinitionAvailableExternally &&
       D->needsDestruction(getContext()) == QualType::DK_cxx_destructor;
+
+  // It is helpless to emit the definition for an available_externally variable
+  // which can't be marked as const.
+  // We don't need to check if it needs global ctor or dtor. See the above
+  // comment for ideas.
+  if (IsDefinitionAvailableExternally &&
+      (!D->hasConstantInitialization() ||
+       // TODO: Update this when we have interface to check constexpr
+       // destructor.
+       D->needsDestruction(getContext()) ||
+       !D->getType().isConstantStorage(getContext(), true, true)))
+    return;
 
   const VarDecl *InitDecl;
   const Expr *InitExpr = D->getAnyInitializer(InitDecl);
@@ -5357,15 +5552,17 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
         T = D->getType();
 
       if (getLangOpts().CPlusPlus) {
-        if (InitDecl->hasFlexibleArrayInit(getContext()))
-          ErrorUnsupported(D, "flexible array initializer");
         Init = EmitNullConstant(T);
-
         if (!IsDefinitionAvailableExternally)
           NeedsGlobalCtor = true;
+        if (InitDecl->hasFlexibleArrayInit(getContext())) {
+          ErrorUnsupported(D, "flexible array initializer");
+          // We cannot create ctor for flexible array initializer
+          NeedsGlobalCtor = false;
+        }
       } else {
         ErrorUnsupported(D, "static initializer");
-        Init = llvm::UndefValue::get(getTypes().ConvertType(T));
+        Init = llvm::PoisonValue::get(getTypes().ConvertType(T));
       }
     } else {
       Init = Initializer;
@@ -5385,7 +5582,7 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
     }
   }
 
-  llvm::Type *InitType = Init->getType();
+  llvm::Type* InitType = Init->getType();
   llvm::Constant *Entry =
       GetAddrOfGlobalVar(D, InitType, ForDefinition_t(!IsTentative));
 
@@ -5454,13 +5651,17 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
     getCUDARuntime().handleVarRegistration(D, *GV);
   }
 
+  if (LangOpts.HLSL)
+    getHLSLRuntime().handleGlobalVarDefinition(D, GV);
+
   GV->setInitializer(Init);
   if (emitter)
     emitter->finalize(GV);
 
   // If it is safe to mark the global 'constant', do so now.
-  GV->setConstant(!NeedsGlobalCtor && !NeedsGlobalDtor &&
-                  D->getType().isConstantStorage(getContext(), true, true));
+  GV->setConstant((D->hasAttr<CUDAConstantAttr>() && LangOpts.CUDAIsDevice) ||
+                  (!NeedsGlobalCtor && !NeedsGlobalDtor &&
+                   D->getType().isConstantStorage(getContext(), true, true)));
 
   // If it is in a read-only section, mark it 'constant'.
   if (const SectionAttr *SA = D->getAttr<SectionAttr>()) {
@@ -5546,6 +5747,18 @@ void CodeGenModule::EmitExternalVarDeclaration(const VarDecl *D) {
           GetOrCreateLLVMGlobal(D->getName(), Ty, ASTTy.getAddressSpace(), D);
       DI->EmitExternalVariable(
           cast<llvm::GlobalVariable>(GV->stripPointerCasts()), D);
+    }
+}
+
+void CodeGenModule::EmitExternalFunctionDeclaration(const FunctionDecl *FD) {
+  if (CGDebugInfo *DI = getModuleDebugInfo())
+    if (getCodeGenOpts().hasReducedDebugInfo()) {
+      auto *Ty = getTypes().ConvertType(FD->getType());
+      StringRef MangledName = getMangledName(FD);
+      auto *Fn = cast<llvm::Function>(
+          GetOrCreateLLVMFunction(MangledName, Ty, FD, /* ForVTable */ false));
+      if (!Fn->getSubprogram())
+        DI->EmitFunctionDecl(FD, FD->getLocation(), FD->getType(), Fn);
     }
 }
 
@@ -5714,10 +5927,11 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
   llvm::Type *newRetTy = newFn->getReturnType();
   SmallVector<llvm::Value *, 4> newArgs;
 
+  SmallVector<llvm::CallBase *> callSitesToBeRemovedFromParent;
+
   for (llvm::Value::use_iterator ui = old->use_begin(), ue = old->use_end();
-       ui != ue;) {
-    llvm::Value::use_iterator use = ui++; // Increment before the use is erased.
-    llvm::User *user = use->getUser();
+       ui != ue; ui++) {
+    llvm::User *user = ui->getUser();
 
     // Recognize and replace uses of bitcasts.  Most calls to
     // unprototyped functions will use bitcasts.
@@ -5731,7 +5945,7 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
     llvm::CallBase *callSite = dyn_cast<llvm::CallBase>(user);
     if (!callSite)
       continue;
-    if (!callSite->isCallee(&*use))
+    if (!callSite->isCallee(&*ui))
       continue;
 
     // If the return types don't match exactly, then we can't
@@ -5775,13 +5989,13 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
 
     llvm::CallBase *newCall;
     if (isa<llvm::CallInst>(callSite)) {
-      newCall =
-          llvm::CallInst::Create(newFn, newArgs, newBundles, "", callSite);
+      newCall = llvm::CallInst::Create(newFn, newArgs, newBundles, "",
+                                       callSite->getIterator());
     } else {
       auto *oldInvoke = cast<llvm::InvokeInst>(callSite);
-      newCall = llvm::InvokeInst::Create(newFn, oldInvoke->getNormalDest(),
-                                         oldInvoke->getUnwindDest(), newArgs,
-                                         newBundles, "", callSite);
+      newCall = llvm::InvokeInst::Create(
+          newFn, oldInvoke->getNormalDest(), oldInvoke->getUnwindDest(),
+          newArgs, newBundles, "", callSite->getIterator());
     }
     newArgs.clear(); // for the next iteration
 
@@ -5800,6 +6014,10 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
     if (callSite->getDebugLoc())
       newCall->setDebugLoc(callSite->getDebugLoc());
 
+    callSitesToBeRemovedFromParent.push_back(callSite);
+  }
+
+  for (auto *callSite : callSitesToBeRemovedFromParent) {
     callSite->eraseFromParent();
   }
 }
@@ -5816,15 +6034,15 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
 static void ReplaceUsesOfNonProtoTypeWithRealFunction(llvm::GlobalValue *Old,
                                                       llvm::Function *NewFn) {
   // If we're redefining a global as a function, don't transform it.
-  if (!isa<llvm::Function>(Old))
-    return;
+  if (!isa<llvm::Function>(Old)) return;
 
   replaceUsesOfNonProtoConstant(Old, NewFn);
 }
 
 void CodeGenModule::HandleCXXStaticMemberVarInstantiation(VarDecl *VD) {
   auto DK = VD->isThisDeclarationADefinition();
-  if (DK == VarDecl::Definition && VD->hasAttr<DLLImportAttr>())
+  if ((DK == VarDecl::Definition && VD->hasAttr<DLLImportAttr>()) ||
+      (LangOpts.CUDA && !shouldEmitCUDAGlobalVar(VD)))
     return;
 
   TemplateSpecializationKind TSK = VD->getTemplateSpecializationKind();
@@ -5965,8 +6183,7 @@ void CodeGenModule::EmitAliasDefinition(GlobalDecl GD) {
   // Emit global alias debug information.
   if (isa<VarDecl>(D))
     if (CGDebugInfo *DI = getModuleDebugInfo())
-      DI->EmitGlobalAlias(
-          cast<llvm::GlobalValue>(GA->getAliasee()->stripPointerCasts()), GD);
+      DI->EmitGlobalAlias(cast<llvm::GlobalValue>(GA->getAliasee()->stripPointerCasts()), GD);
 }
 
 void CodeGenModule::emitIFuncDefinition(GlobalDecl GD) {
@@ -5997,13 +6214,17 @@ void CodeGenModule::emitIFuncDefinition(GlobalDecl GD) {
 
   Aliases.push_back(GD);
 
-  llvm::Type *DeclTy = getTypes().ConvertTypeForMem(D->getType());
-  llvm::Type *ResolverTy = llvm::GlobalIFunc::getResolverFunctionType(DeclTy);
+  // The resolver might not be visited yet. Specify a dummy non-function type to
+  // indicate IsIncompleteFunction. Either the type is ignored (if the resolver
+  // was emitted) or the whole function will be replaced (if the resolver has
+  // not been emitted).
   llvm::Constant *Resolver =
-      GetOrCreateLLVMFunction(IFA->getResolver(), ResolverTy, {},
+      GetOrCreateLLVMFunction(IFA->getResolver(), VoidTy, {},
                               /*ForVTable=*/false);
+  llvm::Type *DeclTy = getTypes().ConvertTypeForMem(D->getType());
+  unsigned AS = getTypes().getTargetAddressSpace(D->getType());
   llvm::GlobalIFunc *GIF = llvm::GlobalIFunc::create(
-      DeclTy, 0, llvm::Function::ExternalLinkage, "", Resolver, &getModule());
+      DeclTy, AS, llvm::Function::ExternalLinkage, "", Resolver, &getModule());
   if (Entry) {
     if (GIF->getResolver() == Entry) {
       Diags.Report(IFA->getLocation(), diag::err_cyclic_alias) << 1;
@@ -6024,16 +6245,13 @@ void CodeGenModule::emitIFuncDefinition(GlobalDecl GD) {
     Entry->eraseFromParent();
   } else
     GIF->setName(MangledName);
-  if (auto *F = dyn_cast<llvm::Function>(Resolver)) {
-    F->addFnAttr(llvm::Attribute::DisableSanitizerInstrumentation);
-  }
   SetCommonAttributes(GD, GIF);
 }
 
 llvm::Function *CodeGenModule::getIntrinsic(unsigned IID,
-                                            ArrayRef<llvm::Type *> Tys) {
-  return llvm::Intrinsic::getDeclaration(&getModule(), (llvm::Intrinsic::ID)IID,
-                                         Tys);
+                                            ArrayRef<llvm::Type*> Tys) {
+  return llvm::Intrinsic::getOrInsertDeclaration(&getModule(),
+                                                 (llvm::Intrinsic::ID)IID, Tys);
 }
 
 static llvm::StringMapEntry<llvm::GlobalVariable *> &
@@ -6067,8 +6285,7 @@ GetConstantCFStringEntry(llvm::StringMap<llvm::GlobalVariable *> &Map,
   return *Map.insert(std::make_pair(
                          StringRef(reinterpret_cast<const char *>(ToBuf.data()),
                                    (StringLength + 1) * 2),
-                         nullptr))
-              .first;
+                         nullptr)).first;
 }
 
 ConstantAddress
@@ -6081,11 +6298,8 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
                                StringLength);
 
   if (auto *C = Entry.second)
-    return ConstantAddress(C, C->getValueType(),
-                           CharUnits::fromQuantity(C->getAlignment()));
-
-  llvm::Constant *Zero = llvm::Constant::getNullValue(Int32Ty);
-  llvm::Constant *Zeros[] = {Zero, Zero};
+    return ConstantAddress(
+        C, C->getValueType(), CharUnits::fromQuantity(C->getAlignment()));
 
   const ASTContext &Context = getContext();
   const llvm::Triple &Triple = getTriple();
@@ -6103,10 +6317,8 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
     Ty = llvm::ArrayType::get(Ty, 0);
 
     switch (CFRuntime) {
-    default:
-      break;
-    case LangOptions::CoreFoundationABI::Swift:
-      [[fallthrough]];
+    default: break;
+    case LangOptions::CoreFoundationABI::Swift: [[fallthrough]];
     case LangOptions::CoreFoundationABI::Swift5_0:
       CFConstantStringClassName =
           Triple.isOSDarwin() ? "$s15SwiftFoundation19_NSCFConstantStringCN"
@@ -6159,8 +6371,7 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
 
     // Decay array -> ptr
     CFConstantStringClassRef =
-        IsSwiftABI ? llvm::ConstantExpr::getPtrToInt(C, Ty)
-                   : llvm::ConstantExpr::getGetElementPtr(Ty, C, Zeros);
+        IsSwiftABI ? llvm::ConstantExpr::getPtrToInt(C, Ty) : C;
   }
 
   QualType CFTy = Context.getCFConstantStringType();
@@ -6216,14 +6427,12 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
     GV->setSection(".rodata");
 
   // String.
-  llvm::Constant *Str =
-      llvm::ConstantExpr::getGetElementPtr(GV->getValueType(), GV, Zeros);
-
-  Fields.add(Str);
+  Fields.add(GV);
 
   // String length.
-  llvm::IntegerType *LengthTy = llvm::IntegerType::get(
-      getModule().getContext(), Context.getTargetInfo().getLongWidth());
+  llvm::IntegerType *LengthTy =
+      llvm::IntegerType::get(getModule().getContext(),
+                             Context.getTargetInfo().getLongWidth());
   if (IsSwiftABI) {
     if (CFRuntime == LangOptions::CoreFoundationABI::Swift4_1 ||
         CFRuntime == LangOptions::CoreFoundationABI::Swift4_2)
@@ -6281,11 +6490,14 @@ QualType CodeGenModule::getObjCFastEnumerationStateType() {
                                      nullptr, ArraySizeModifier::Normal, 0)};
 
     for (size_t i = 0; i < 4; ++i) {
-      FieldDecl *Field =
-          FieldDecl::Create(Context, D, SourceLocation(), SourceLocation(),
-                            nullptr, FieldTypes[i], /*TInfo=*/nullptr,
-                            /*BitWidth=*/nullptr,
-                            /*Mutable=*/false, ICIS_NoInit);
+      FieldDecl *Field = FieldDecl::Create(Context,
+                                           D,
+                                           SourceLocation(),
+                                           SourceLocation(), nullptr,
+                                           FieldTypes[i], /*TInfo=*/nullptr,
+                                           /*BitWidth=*/nullptr,
+                                           /*Mutable=*/false,
+                                           ICIS_NoInit);
       Field->setAccess(AS_public);
       D->addDecl(Field);
     }
@@ -6322,7 +6534,7 @@ CodeGenModule::GetConstantArrayFromStringLiteral(const StringLiteral *E) {
     SmallVector<uint16_t, 32> Elements;
     Elements.reserve(NumElements);
 
-    for (unsigned i = 0, e = E->getLength(); i != e; ++i)
+    for(unsigned i = 0, e = E->getLength(); i != e; ++i)
       Elements.push_back(E->getCodeUnit(i));
     Elements.resize(NumElements);
     return llvm::ConstantDataArray::get(VMContext, Elements);
@@ -6332,7 +6544,7 @@ CodeGenModule::GetConstantArrayFromStringLiteral(const StringLiteral *E) {
   SmallVector<uint32_t, 32> Elements;
   Elements.reserve(NumElements);
 
-  for (unsigned i = 0, e = E->getLength(); i != e; ++i)
+  for(unsigned i = 0, e = E->getLength(); i != e; ++i)
     Elements.push_back(E->getCodeUnit(i));
   Elements.resize(NumElements);
   return llvm::ConstantDataArray::get(VMContext, Elements);
@@ -6427,9 +6639,8 @@ CodeGenModule::GetAddrOfConstantStringFromObjCEncode(const ObjCEncodeExpr *E) {
 /// GetAddrOfConstantCString - Returns a pointer to a character array containing
 /// the literal and a terminating '\0' character.
 /// The result has pointer to array type.
-ConstantAddress
-CodeGenModule::GetAddrOfConstantCString(const std::string &Str,
-                                        const char *GlobalName) {
+ConstantAddress CodeGenModule::GetAddrOfConstantCString(
+    const std::string &Str, const char *GlobalName) {
   StringRef StrWithNull(Str.c_str(), Str.size() + 1);
   CharUnits Alignment = getContext().getAlignOfGlobalVarInChars(
       getContext().CharTy, /*VD=*/nullptr);
@@ -6462,12 +6673,10 @@ CodeGenModule::GetAddrOfConstantCString(const std::string &Str,
                          GV->getValueType(), Alignment);
 }
 
-ConstantAddress
-CodeGenModule::GetAddrOfGlobalTemporary(const MaterializeTemporaryExpr *E,
-                                        const Expr *Init) {
+ConstantAddress CodeGenModule::GetAddrOfGlobalTemporary(
+    const MaterializeTemporaryExpr *E, const Expr *Init) {
   assert((E->getStorageDuration() == SD_Static ||
-          E->getStorageDuration() == SD_Thread) &&
-         "not a global temporary");
+          E->getStorageDuration() == SD_Thread) && "not a global temporary");
   const auto *VD = cast<VarDecl>(E->getExtendingDecl());
 
   // If we're not materializing a subobject of the temporary, keep the
@@ -6531,8 +6740,8 @@ CodeGenModule::GetAddrOfGlobalTemporary(const MaterializeTemporaryExpr *E,
   if (Value) {
     // The temporary has a constant initializer, use it.
     emitter.emplace(*this);
-    InitialValue =
-        emitter->emitForInitializer(*Value, AddrSpace, MaterializedType);
+    InitialValue = emitter->emitForInitializer(*Value, AddrSpace,
+                                               MaterializedType);
     Constant =
         MaterializedType.isConstantStorage(getContext(), /*ExcludeCtor*/ Value,
                                            /*ExcludeDtor*/ false);
@@ -6562,8 +6771,7 @@ CodeGenModule::GetAddrOfGlobalTemporary(const MaterializeTemporaryExpr *E,
   auto *GV = new llvm::GlobalVariable(
       getModule(), Type, Constant, Linkage, InitialValue, Name.c_str(),
       /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal, TargetAS);
-  if (emitter)
-    emitter->finalize(GV);
+  if (emitter) emitter->finalize(GV);
   // Don't assign dllimport or dllexport to local linkage globals.
   if (!llvm::GlobalValue::isLocalLinkage(Linkage)) {
     setGVProperties(GV, VD);
@@ -6598,8 +6806,8 @@ CodeGenModule::GetAddrOfGlobalTemporary(const MaterializeTemporaryExpr *E,
 
 /// EmitObjCPropertyImplementations - Emit information for synthesized
 /// properties for an implementation.
-void CodeGenModule::EmitObjCPropertyImplementations(
-    const ObjCImplementationDecl *D) {
+void CodeGenModule::EmitObjCPropertyImplementations(const
+                                                    ObjCImplementationDecl *D) {
   for (const auto *PID : D->property_impls()) {
     // Dynamic is just for type-checking.
     if (PID->getPropertyImplementation() == ObjCPropertyImplDecl::Synthesize) {
@@ -6617,15 +6825,15 @@ void CodeGenModule::EmitObjCPropertyImplementations(
       auto *Setter = PID->getSetterMethodDecl();
       if (!PD->isReadOnly() && (!Setter || Setter->isSynthesizedAccessorStub()))
         CodeGenFunction(*this).GenerateObjCSetter(
-            const_cast<ObjCImplementationDecl *>(D), PID);
+                                 const_cast<ObjCImplementationDecl *>(D), PID);
     }
   }
 }
 
 static bool needsDestructMethod(ObjCImplementationDecl *impl) {
   const ObjCInterfaceDecl *iface = impl->getClassInterface();
-  for (const ObjCIvarDecl *ivar = iface->all_declared_ivar_begin(); ivar;
-       ivar = ivar->getNextIvar())
+  for (const ObjCIvarDecl *ivar = iface->all_declared_ivar_begin();
+       ivar; ivar = ivar->getNextIvar())
     if (ivar->getType().isDestructedType())
       return true;
 
@@ -6636,8 +6844,7 @@ static bool AllTrivialInitializers(CodeGenModule &CGM,
                                    ObjCImplementationDecl *D) {
   CodeGenFunction CGF(CGM);
   for (ObjCImplementationDecl::init_iterator B = D->init_begin(),
-                                             E = D->init_end();
-       B != E; ++B) {
+       E = D->init_end(); B != E; ++B) {
     CXXCtorInitializer *CtorInitExp = *B;
     Expr *Init = CtorInitExp->getInit();
     if (!CGF.isTrivialInitializer(Init))
@@ -6667,7 +6874,8 @@ void CodeGenModule::EmitObjCIvarInitializations(ObjCImplementationDecl *D) {
 
   // If the implementation doesn't have any ivar initializers, we don't need
   // a .cxx_construct.
-  if (D->getNumIvarInitializers() == 0 || AllTrivialInitializers(*this, D))
+  if (D->getNumIvarInitializers() == 0 ||
+      AllTrivialInitializers(*this, D))
     return;
 
   const IdentifierInfo *II = &getContext().Idents.get(".cxx_construct");
@@ -6799,8 +7007,7 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
               TSK_ExplicitInstantiationDefinition &&
           Spec->hasDefinition())
         DI->completeTemplateDefinition(*Spec);
-  }
-    [[fallthrough]];
+  } [[fallthrough]];
   case Decl::CXXRecord: {
     CXXRecordDecl *CRD = cast<CXXRecordDecl>(D);
     if (CGDebugInfo *DI = getModuleDebugInfo()) {
@@ -6828,9 +7035,9 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
   case Decl::Empty:
   case Decl::Binding:
     break;
-  case Decl::Using: // using X; [C++]
+  case Decl::Using:          // using X; [C++]
     if (CGDebugInfo *DI = getModuleDebugInfo())
-      DI->EmitUsingDecl(cast<UsingDecl>(*D));
+        DI->EmitUsingDecl(cast<UsingDecl>(*D));
     break;
   case Decl::UsingEnum: // using enum X; [C++]
     if (CGDebugInfo *DI = getModuleDebugInfo())
@@ -6838,7 +7045,7 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     break;
   case Decl::NamespaceAlias:
     if (CGDebugInfo *DI = getModuleDebugInfo())
-      DI->EmitNamespaceAlias(cast<NamespaceAliasDecl>(*D));
+        DI->EmitNamespaceAlias(cast<NamespaceAliasDecl>(*D));
     break;
   case Decl::UsingDirective: // using namespace X; [C++]
     if (CGDebugInfo *DI = getModuleDebugInfo())
@@ -6883,9 +7090,8 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     // Emit global variable debug information.
     if (CGDebugInfo *DI = getModuleDebugInfo())
       if (getCodeGenOpts().hasReducedDebugInfo())
-        DI->getOrCreateInterfaceType(
-            getContext().getObjCInterfaceType(OMD->getClassInterface()),
-            OMD->getLocation());
+        DI->getOrCreateInterfaceType(getContext().getObjCInterfaceType(
+            OMD->getClassInterface()), OMD->getLocation());
     break;
   }
   case Decl::ObjCMethod: {
@@ -6908,7 +7114,7 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
       AppendLinkerOptions(PCD->getArg());
       break;
     case PCK_Lib:
-      AddDependentLib(PCD->getArg());
+        AddDependentLib(PCD->getArg());
       break;
     case PCK_Compiler:
     case PCK_ExeStr:
@@ -6963,8 +7169,8 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     // For C++ standard modules we are done - we will call the module
     // initializer for imported modules, and that will likewise call those for
     // any imports it has.
-    if (CXX20ModuleInits && Import->getImportedOwningModule() &&
-        !Import->getImportedOwningModule()->isModuleMapModule())
+    if (CXX20ModuleInits && Import->getImportedModule() &&
+        Import->getImportedModule()->isNamedModule())
       break;
 
     // For clang C++ module map modules the initializers for sub-modules are
@@ -7070,6 +7276,9 @@ void CodeGenModule::AddDeferredUnusedCoverageMapping(Decl *D) {
     SourceManager &SM = getContext().getSourceManager();
     if (LimitedCoverage && SM.getMainFileID() != SM.getFileID(D->getBeginLoc()))
       break;
+    if (!llvm::coverage::SystemHeadersCoverage &&
+        SM.isInSystemHeader(D->getBeginLoc()))
+      break;
     DeferredEmptyCoverageMappingDecls.try_emplace(D, true);
     break;
   }
@@ -7135,8 +7344,7 @@ void CodeGenModule::EmitMainVoidAlias() {
   // new-style no-argument main is in used.
   if (llvm::Function *F = getModule().getFunction("main")) {
     if (!F->isDeclaration() && F->arg_size() == 0 && !F->isVarArg() &&
-        F->getReturnType()->isIntegerTy(
-            Context.getTargetInfo().getIntWidth())) {
+        F->getReturnType()->isIntegerTy(Context.getTargetInfo().getIntWidth())) {
       auto *GA = llvm::GlobalAlias::create("__main_void", F);
       GA->setVisibility(llvm::GlobalValue::HiddenVisibility);
     }
@@ -7153,10 +7361,11 @@ static llvm::Constant *GetPointerConstant(llvm::LLVMContext &Context,
 
 static void EmitGlobalDeclMetadata(CodeGenModule &CGM,
                                    llvm::NamedMDNode *&GlobalMetadata,
-                                   GlobalDecl D, llvm::GlobalValue *Addr) {
+                                   GlobalDecl D,
+                                   llvm::GlobalValue *Addr) {
   if (!GlobalMetadata)
     GlobalMetadata =
-        CGM.getModule().getOrInsertNamedMetadata("clang.global.decl.ptrs");
+      CGM.getModule().getOrInsertNamedMetadata("clang.global.decl.ptrs");
 
   // TODO: should we report variant information for ctors/dtors?
   llvm::Metadata *Ops[] = {llvm::ConstantAsMetadata::get(Addr),
@@ -7290,8 +7499,7 @@ void CodeGenModule::EmitDeclMetadata() {
 /// Emits metadata nodes for all the local variables in the current
 /// function.
 void CodeGenFunction::EmitDeclMetadata() {
-  if (LocalDeclMap.empty())
-    return;
+  if (LocalDeclMap.empty()) return;
 
   llvm::LLVMContext &Context = getLLVMContext();
 
@@ -7317,7 +7525,7 @@ void CodeGenFunction::EmitDeclMetadata() {
 
 void CodeGenModule::EmitVersionIdentMetadata() {
   llvm::NamedMDNode *IdentMetadata =
-      TheModule.getOrInsertNamedMetadata("llvm.ident");
+    TheModule.getOrInsertNamedMetadata("llvm.ident");
   std::string Version = getClangFullVersion();
   llvm::LLVMContext &Ctx = TheModule.getContext();
 
@@ -7327,7 +7535,7 @@ void CodeGenModule::EmitVersionIdentMetadata() {
 
 void CodeGenModule::EmitCommandLineMetadata() {
   llvm::NamedMDNode *CommandLineMetadata =
-      TheModule.getOrInsertNamedMetadata("llvm.commandline");
+    TheModule.getOrInsertNamedMetadata("llvm.commandline");
   std::string CommandLine = getCodeGenOpts().RecordCommandLine;
   llvm::LLVMContext &Ctx = TheModule.getContext();
 
@@ -7372,7 +7580,7 @@ void CodeGenModule::EmitOMPThreadPrivateDecl(const OMPThreadPrivateDecl *D) {
   // Do not emit threadprivates in simd-only mode.
   if (LangOpts.OpenMP && LangOpts.OpenMPSimd)
     return;
-  for (auto RefExpr : D->varlists()) {
+  for (auto RefExpr : D->varlist()) {
     auto *VD = cast<VarDecl>(cast<DeclRefExpr>(RefExpr)->getDecl());
     bool PerformInit =
         VD->getAnyInitializer() &&
@@ -7438,8 +7646,8 @@ static QualType GeneralizeType(ASTContext &Ctx, QualType Ty) {
     return Ty;
 
   return Ctx.getPointerType(
-      QualType(Ctx.VoidTy)
-          .withCVRQualifiers(Ty->getPointeeType().getCVRQualifiers()));
+      QualType(Ctx.VoidTy).withCVRQualifiers(
+          Ty->getPointeeType().getCVRQualifiers()));
 }
 
 // Apply type generalization to a FunctionType's return and argument types
@@ -7449,8 +7657,9 @@ static QualType GeneralizeFunctionType(ASTContext &Ctx, QualType Ty) {
     for (auto &Param : FnType->param_types())
       GeneralizedParams.push_back(GeneralizeType(Ctx, Param));
 
-    return Ctx.getFunctionType(GeneralizeType(Ctx, FnType->getReturnType()),
-                               GeneralizedParams, FnType->getExtProtoInfo());
+    return Ctx.getFunctionType(
+        GeneralizeType(Ctx, FnType->getReturnType()),
+        GeneralizedParams, FnType->getExtProtoInfo());
   }
 
   if (auto *FnType = Ty->getAs<FunctionNoProtoType>())
@@ -7670,8 +7879,6 @@ void CodeGenModule::moveLazyEmissionStates(CodeGenModule *NewBuilder) {
   NewBuilder->Manglings = std::move(Manglings);
 
   NewBuilder->WeakRefReferences = std::move(WeakRefReferences);
-
-  NewBuilder->TBAA = std::move(TBAA);
 
   NewBuilder->ABI->MangleCtx = std::move(ABI->MangleCtx);
 }

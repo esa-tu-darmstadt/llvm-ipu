@@ -31,7 +31,7 @@ using namespace llvm;
 // pointer register.  This is true if frame pointer elimination is
 // disabled, if it needs dynamic stack realignment, if the function has
 // variable sized allocas, or if the frame address is taken.
-bool LoongArchFrameLowering::hasFP(const MachineFunction &MF) const {
+bool LoongArchFrameLowering::hasFPImpl(const MachineFunction &MF) const {
   const TargetRegisterInfo *RegInfo = MF.getSubtarget().getRegisterInfo();
 
   const MachineFrameInfo &MFI = MF.getFrameInfo();
@@ -149,7 +149,8 @@ void LoongArchFrameLowering::processFunctionBeforeFrameFinalized(
 
   unsigned ScavSlotsNum = 0;
 
-  // Far branches beyond 27-bit offset require a spill slot for scratch register.
+  // Far branches beyond 27-bit offset require a spill slot for scratch
+  // register.
   bool IsLargeFunction = !isInt<27>(estimateFunctionSizeInBytes(TII, MF));
   if (IsLargeFunction)
     ScavSlotsNum = 1;
