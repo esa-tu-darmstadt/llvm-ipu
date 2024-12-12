@@ -67,7 +67,9 @@ public:
     IgnoredAttribute,
     UnknownAttribute,
   };
-  enum class Scope { NONE, CLANG, GNU, MSVC, OMP, HLSL, GSL, RISCV };
+  // IPU local patch begin
+  enum class Scope { NONE, CLANG, GNU, MSVC, OMP, HLSL, GSL, RISCV, COLOSSUS };
+  // IPU local patch end
 
 private:
   const IdentifierInfo *AttrName = nullptr;

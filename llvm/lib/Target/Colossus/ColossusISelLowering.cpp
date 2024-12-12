@@ -7156,7 +7156,7 @@ LowerCall(TargetLowering::CallLoweringInfo &CLI,
       std::array<StringRef, 2> ignoreCallCtxFor = {"puts", "putchar"};
       bool canBeIgnored = std::any_of(
           ignoreCallCtxFor.begin(), ignoreCallCtxFor.end(),
-          [&CalleeFn](StringRef &S) { return S.equals(CalleeFn->getName()); });
+          [&CalleeFn](StringRef &S) { return S == CalleeFn->getName(); });
 
       // Either the validation step can be ignored or we have to check for it.
       if (!canBeIgnored && !hasCorrectExecutionContexts())
@@ -7200,8 +7200,8 @@ LowerCall(TargetLowering::CallLoweringInfo &CLI,
     SDValue FIN = DAG.getFrameIndex(FrameIndex, MVT::i32);
     SDValue SizeNode = DAG.getConstant(Size, dl, MVT::i32);
     Chain =
-        DAG.getMemcpy(Chain, dl, FIN, Arg, SizeNode, Alignment, false, false,
-                      isTailCall, MachinePointerInfo(), MachinePointerInfo());
+        DAG.getMemcpy(Chain, dl, FIN, Arg, SizeNode, Alignment, /*IsVolatile=*/false, /*AlwaysInline=*/false,
+                      /*CI*/nullptr, isTailCall, MachinePointerInfo(), MachinePointerInfo());
     LLVM_DEBUG(dbgs() << "  > Local space allocated for byval arg " << I
                       << " at frame index " << FrameIndex << '\n');
     ByValArgs.push_back(FIN);

@@ -32,6 +32,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/IR/DerivedTypes.h"
 #define DEBUG_TYPE "colossus-intrinsic-calls"
 #define COLOSSUS_INTRINSIC_CALLS_PASS_NAME "Colossus intrinsic calls pass"
 
@@ -129,10 +130,10 @@ bool ColossusIntrinsicCalls::run() {
     {
       Type *polyType = strToType(name);
       Function *TheFn =
-          Intrinsic::getDeclaration(M, Intrinsic::colossus_ststep, {polyType});
+          Intrinsic::getOrInsertDeclaration(M, Intrinsic::colossus_ststep, {polyType});
 
-      Type *LoadTy = polyType->getPointerTo();
-      auto I8PtrTy = Type::getInt8Ty(ctx)->getPointerTo();
+      Type *LoadTy = PointerType::get(polyType, 0);
+      auto I8PtrTy = PointerType::get( Type::getInt8Ty(ctx), 0);
       auto loaded =
           Builder.CreateBitCast(Builder.CreateLoad(LoadTy, addr), I8PtrTy);
       CallInst *intrinCall = Builder.CreateCall(TheFn, {value, loaded, incr});
@@ -152,9 +153,9 @@ bool ColossusIntrinsicCalls::run() {
     {
       Type *polyType = strToType(name);
       Function *TheFn =
-          Intrinsic::getDeclaration(M, Intrinsic::colossus_ldstep, {polyType});
+          Intrinsic::getOrInsertDeclaration(M, Intrinsic::colossus_ldstep, {polyType});
 
-      Type *LoadTy = polyType->getPointerTo();
+      Type *LoadTy = PointerType::get(polyType, 0);
       auto loaded = Builder.CreateLoad(LoadTy, addr);
       CallInst *intrinCall = Builder.CreateCall(TheFn, {loaded, incr});
       Value *resValue = Builder.CreateExtractValue(intrinCall, {0});
@@ -204,7 +205,7 @@ bool ColossusIntrinsicCalls::run() {
         }
         Type *storePrototype[4] = {
             Type::getVoidTy(ctx),
-            reqValueType->getPointerTo()->getPointerTo(),
+            PointerType::get(PointerType::get(reqValueType, 0), 0),
             reqValueType,
             Type::getInt32Ty(ctx),
         };
@@ -230,7 +231,7 @@ bool ColossusIntrinsicCalls::run() {
         }
         Type *loadPrototype[3] = {
             reqValueType,
-            reqValueType->getPointerTo()->getPointerTo(),
+            PointerType::get(PointerType::get(reqValueType, 0), 0),
             Type::getInt32Ty(ctx),
         };
         Type *callPrototype[3] = {

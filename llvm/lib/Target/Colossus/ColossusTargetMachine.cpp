@@ -67,7 +67,7 @@ ColossusTargetMachine::ColossusTargetMachine(const Target &T, const Triple &TT,
                                              std::optional<Reloc::Model> RM,
                                              std::optional<CodeModel::Model> CM,
                                              CodeGenOptLevel OL, bool JIT)
-    : LLVMTargetMachine(T,
+    : CodeGenTargetMachineImpl(T,
                         "e-m:e-p:32:32-i1:8:32-i8:8:32-i16:16:32-i64:32-i128:64"
                         "-f64:32-f128:64-v128:64-a:0:32-n32",
                         TT, CPU, FS, Options, getEffectiveRelocModel(RM),
@@ -218,7 +218,7 @@ ColossusTargetMachine::getTargetTransformInfo(const Function &F) const {
 }
 
 void ColossusTargetMachine::registerPassBuilderCallbacks(
-    PassBuilder &PB, bool PopulateClassToPassNames) {
+    PassBuilder &PB) {
   PB.registerScalarOptimizerLateEPCallback(
       [=](FunctionPassManager &FPM, OptimizationLevel Level) {
         FPM.addPass(ColossusIntrinsicCallsPass());

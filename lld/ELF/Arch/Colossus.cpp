@@ -57,7 +57,7 @@ class Colossus final : public TargetInfo {
   }
 
 public:
-  Colossus();
+  Colossus(Ctx &ctx);
   void relocate(uint8_t *Loc, const Relocation &Rel,
                 uint64_t Val) const override;
   uint32_t calcEFlags() const override;
@@ -66,7 +66,7 @@ public:
 };
 } // namespace
 
-Colossus::Colossus() : IAI(*ipuArchInfoByName(getCPU())) {
+Colossus::Colossus(Ctx &ctx) : TargetInfo(ctx), IAI(*ipuArchInfoByName(getCPU())) {
   defaultImageBase = IAI.TMEM_REGION0_BASE_ADDR;
   defaultMaxPageSize = 4;
 }
@@ -84,13 +84,11 @@ uint32_t Colossus::calcEFlags() const {
                     EF_GRAPHCORE_ARCH;
 
   for (InputFile *f : ctx.objectFiles) {
-    assert(config->ekind == ELF32LEKind);
+    assert(f->ekind == ELF32LEKind);
     uint32_t eflags = cast<ObjFile<ELF32LE>>(f)->getObj().getHeader().e_flags &
                       EF_GRAPHCORE_ARCH;
     if (eflags && target && eflags != target) {
-      warn(toString(f) +
-           "Cannot link object files compiled for different IPU arch" +
-           toString(ctx.objectFiles.front()));
+      Warn(ctx) << f << "Cannot link object files compiled for different IPU arch" << ctx.objectFiles.front();
     }
   }
   return target;
@@ -104,14 +102,14 @@ RelExpr Colossus::getRelExpr(RelType Type, const Symbol &S,
 void Colossus::relocate(uint8_t *Loc, const Relocation &Rel,
                         uint64_t Val) const {
 
-  const auto elfCheckAlignment = [](uint8_t *Loc, uint64_t V, int N,
+  const auto elfCheckAlignment = [&](uint8_t *Loc, uint64_t V, int N,
                                     const Relocation &Rel) {
-    checkAlignment(Loc, V, N, Rel);
+    checkAlignment(ctx, Loc, V, N, Rel);
     return true;
   };
-  const auto elfCheckUInt = [](uint8_t *Loc, uint64_t V, int N,
+  const auto elfCheckUInt = [&](uint8_t *Loc, uint64_t V, int N,
                                const Relocation &Rel) {
-    checkUInt(Loc, V, N, Rel);
+    checkUInt(ctx, Loc, V, N, Rel);
     return true;
   };
 
@@ -119,7 +117,7 @@ void Colossus::relocate(uint8_t *Loc, const Relocation &Rel,
   // returns false it must be because it is an unrecognised relocation.
   if (!colossus::resolveRelocation(IAI, Loc, Rel, Val, elfCheckAlignment,
                                    elfCheckUInt)) {
-    error(getErrorLocation(Loc) + "unrecognized reloc " + Twine(Rel.type));
+    Err(ctx) << getErrorLoc(ctx, Loc) << "unrecognized reloc "  << Rel.type;
   }
 }
 

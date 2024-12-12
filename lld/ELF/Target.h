@@ -197,7 +197,7 @@ void setSystemZTargetInfo(Ctx &);
 void setX86TargetInfo(Ctx &);
 void setX86_64TargetInfo(Ctx &);
 // IPU local patch begin
-TargetInfo *setColossusTargetInfo(Ctx &);
+void setColossusTargetInfo(Ctx &);
 // IPU local patch end
 
 struct ErrorPlace {

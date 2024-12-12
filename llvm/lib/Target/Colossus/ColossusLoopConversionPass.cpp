@@ -121,7 +121,7 @@ Value *ColossusLoopConversion::processIterIntr(BasicBlock *BB,
   bool isi64TC = counter->getType()->getIntegerBitWidth() == 64;
   Value *zextTruncCounter = SLIIBuilder.CreateZExtOrTrunc(counter, I32Ty);
   Function *func =
-      Intrinsic::getDeclaration(M, Intrinsic::colossus_cloop_begin);
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::colossus_cloop_begin);
   CallInst *cloopBeginCall =
       SLIIBuilder.CreateCall(func, {zextTruncCounter, metadata}, "cloop.begin");
   Value *cloopBegin = isi64TC
@@ -155,7 +155,7 @@ ColossusLoopConversion::processLoopGuardIntr(BasicBlock *Predecessor,
   Value *zextTruncCounter = Builder.CreateZExtOrTrunc(counter, I32Ty);
 
   Function *func =
-      Intrinsic::getDeclaration(M, Intrinsic::colossus_cloop_guard);
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::colossus_cloop_guard);
   CallInst *cloopGuardCall =
       Builder.CreateCall(func, {zextTruncCounter, metadata}, "cloop.guard");
 
@@ -222,7 +222,7 @@ void ColossusLoopConversion::processTestStartIntr(BasicBlock *Predecessor,
   // Create a start.loop.iterations intrinsic, then process it normally.
   IRBuilder<> Builder(Preheader->getTerminator());
   Value *counter = II->getOperand(0);
-  Function *startIntr = Intrinsic::getDeclaration(
+  Function *startIntr = Intrinsic::getOrInsertDeclaration(
       M, Intrinsic::start_loop_iterations, counter->getType());
   IntrinsicInst *startLoopCall =
       cast<IntrinsicInst>(Builder.CreateCall(startIntr, counter));
@@ -270,7 +270,7 @@ void ColossusLoopConversion::processSetIntr(BasicBlock *Preheader,
   IRBuilder<> DecBuilder(LoopDecInstr);
   Value *zextTruncPhi = DecBuilder.CreateZExtOrTrunc(loopPhi, I32Ty);
   CallInst *cloopEnd = DecBuilder.CreateCall(
-      Intrinsic::getDeclaration(M, Intrinsic::colossus_cloop_end),
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::colossus_cloop_end),
       {zextTruncPhi, metadata}, "cloop.end");
 
   Value *indVar =
@@ -311,7 +311,7 @@ void ColossusLoopConversion::processDecRegIntr(BasicBlock *BB,
   IRBuilder<> DecBuilder(II);
   Value *zextTruncPhi = DecBuilder.CreateZExtOrTrunc(loopPhi, I32Ty);
   CallInst *cloopEnd = DecBuilder.CreateCall(
-      Intrinsic::getDeclaration(M, Intrinsic::colossus_cloop_end),
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::colossus_cloop_end),
       {zextTruncPhi, metadata}, "cloop.end");
 
   Value *exactIndVar =

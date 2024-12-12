@@ -43,6 +43,7 @@
 #include "TargetInfo/ColossusTargetInfo.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAssembler.h"
+#include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCInstrAnalysis.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectStreamer.h"
@@ -133,7 +134,6 @@ class ColossusTargetELFStreamer : public ColossusTargetStreamer {
   }
   ColossusTargetELFStreamer(MCStreamer &S, MCSubtargetInfo const &STI)
     : ColossusTargetStreamer(S) {
-      MCAssembler &MCA = getStreamer().getAssembler();
       unsigned flags = ELF::EF_GRAPHCORE_ARCH_IPU1;
 
       if (STI.hasFeature(Colossus::ModeArchIpu2))
@@ -141,7 +141,7 @@ class ColossusTargetELFStreamer : public ColossusTargetStreamer {
       else if (STI.hasFeature(Colossus::ModeArchIpu21))
         flags = ELF::EF_GRAPHCORE_ARCH_IPU21;
 
-      MCA.setELFHeaderEFlags(flags);
+      getStreamer().getWriter().setELFHeaderEFlags(flags);
     }
 
     void emitRawText(StringRef ) override {}
@@ -149,8 +149,7 @@ class ColossusTargetELFStreamer : public ColossusTargetStreamer {
 
 static MCTargetStreamer *createColossusMCAsmStreamer(MCStreamer &S,
                                                      formatted_raw_ostream &OS,
-                                                     MCInstPrinter *InstPrint,
-                                                     bool ShowInst) {
+                                                     MCInstPrinter *InstPrint) {
   return new ColossusTargetAsmStreamer(S, OS);
 }
 

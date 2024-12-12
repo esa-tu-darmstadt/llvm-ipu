@@ -62,6 +62,7 @@ namespace llvm {
 
   FunctionPass *createColossusISelDag(ColossusTargetMachine &TM,
                                    CodeGenOptLevel OptLevel);
+  void initializeColossusDAGToDAGISelLegacyPass(PassRegistry &);
 
   ImmutablePass*
   createColossusTargetTransformInfoPass(const ColossusTargetMachine *TM);

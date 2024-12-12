@@ -1311,8 +1311,8 @@ template <class ELFT> void InputSection::writeTo(Ctx &ctx, uint8_t *buf) {
   // and then apply relocations.
   memcpy(buf, content().data(), content().size());
   // IPU local patch begin
-  if (!config->ignoreRelocations) {
-    relocate<ELFT>(ctx, buf + content().size());
+  if (!ctx.arg.ignoreRelocations) {
+    relocate<ELFT>(ctx, buf, buf + content().size());
   }
   // IPU local patch end
 }

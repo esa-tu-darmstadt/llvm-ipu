@@ -46,11 +46,6 @@ struct Result {
 Result lldMain(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
                llvm::raw_ostream &stderrOS, llvm::ArrayRef<DriverDef> drivers);
 
-// IPU local patch begin
-namespace elf {
-void reset();
-} // namespace elf
-// IPU local patch end
 } // namespace lld
 
 // With this macro, library users must specify which drivers they use, provide

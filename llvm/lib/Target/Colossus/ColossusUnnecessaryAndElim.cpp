@@ -198,7 +198,7 @@ public:
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<MachineDominatorTree>();
+    AU.addRequired<MachineDominatorTreeWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
@@ -276,9 +276,9 @@ static OpAccesses UsesOf(MachineInstr *MI) {
         auto end = CurMBB->end();
 
         for (; It != end; ++It) {
-          if (It->readsRegister(MOP.getReg())) {
+          if (It->readsRegister(MOP.getReg(), /*TRI*/nullptr)) {
             OperandUses.push_back(&(*It));
-            if (It->killsRegister(MOP.getReg()))
+            if (It->killsRegister(MOP.getReg(), /*TRI*/nullptr))
               break;
           }
         }
@@ -456,7 +456,7 @@ bool ColossusUnnecessaryAndElim::RemoveAnds(
 INITIALIZE_PASS_BEGIN(ColossusUnnecessaryAndElim, DEBUG_TYPE,
                       "Colossus unnecessary and instruction elimination", false,
                       false)
-INITIALIZE_PASS_DEPENDENCY(MachineDominatorTree)
+INITIALIZE_PASS_DEPENDENCY(MachineDominatorTreeWrapperPass)
 INITIALIZE_PASS_END(ColossusUnnecessaryAndElim, DEBUG_TYPE,
                     "Colossus unnecessary and instruction elimination", false,
                     false)
@@ -484,7 +484,7 @@ bool ColossusUnnecessaryAndElim::runOnMachineFunction(MachineFunction &MF) {
     return false;
 
   TRI = MF.getSubtarget().getRegisterInfo();
-  MDT = &getAnalysis<MachineDominatorTree>();
+  MDT = &getAnalysis<MachineDominatorTreeWrapperPass>().getDomTree();
 
   SmallVector<MachineInstr *, 4> Ands;
   SmallVector<MIOpAccesses, 4> ValidAnds;

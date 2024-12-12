@@ -48,11 +48,6 @@ namespace llvm {
     ColossusFrameLowering(const ColossusSubtarget &CST,
                           unsigned StackAlignment);
 
-    /// Return true if the specified function should have a dedicated frame
-    /// pointer register. For most targets this is true only if the function has
-    /// variable sized allocas or if frame pointer elimination is disabled.
-    bool hasFP(const MachineFunction &MF) const override;
-
     /// Return true if the specified function should have a dedicated base
     /// pointer register.
     bool hasBP(const MachineFunction &MF) const;
@@ -97,6 +92,12 @@ namespace llvm {
     eliminateCallFramePseudoInstr(MachineFunction &MF,
                                   MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator I) const override;
+                                
+  protected:
+    /// Return true if the specified function should have a dedicated frame
+    /// pointer register. For most targets this is true only if the function has
+    /// variable sized allocas or if frame pointer elimination is disabled.
+    bool hasFPImpl(const MachineFunction &MF) const override;
   };
 }
 

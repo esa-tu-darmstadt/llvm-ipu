@@ -87,8 +87,7 @@ void ColossusMCELFStreamer::emitInstruction(const MCInst &Inst,
 MCStreamer *createColossusELFStreamer(Triple const &, MCContext &Context,
                                       std::unique_ptr<MCAsmBackend> &&MAB,
                                       std::unique_ptr<MCObjectWriter> &&OW,
-                                      std::unique_ptr<MCCodeEmitter> &&CE,
-                                      bool) {
+                                      std::unique_ptr<MCCodeEmitter> &&CE) {
   return new ColossusMCELFStreamer(Context, std::move(MAB), std::move(OW),
                                    std::move(CE));
 }

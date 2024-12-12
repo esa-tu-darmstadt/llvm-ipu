@@ -35,7 +35,6 @@
 #include "MCTargetDesc/ColossusMCInstrInfo.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/MC/MCAsmBackend.h"
-#include "llvm/MC/MCAsmLayout.h"
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDirectives.h"
@@ -177,12 +176,15 @@ public:
 
   bool needsRelaxableFragment(const MCInst &Inst) override;
 
-  bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
-                            const MCRelaxableFragment *DF,
-                            const MCAsmLayout &Layout) const override;
+  bool fixupNeedsRelaxationAdvanced(const MCAssembler &Asm,
+        const MCFixup &Fixup, bool Resolved,
+        uint64_t Value,
+        const MCRelaxableFragment *DF,
+        const bool WasForced) const override;
+
   void relaxInstruction(MCInst &Inst,
                         const MCSubtargetInfo &STI) const override;
-  void finishLayout(MCAssembler const &Asm, MCAsmLayout &Layout) const override;
+  void finishLayout(MCAssembler const &Asm) const override;
   bool writeNopData(raw_ostream &OS, uint64_t Count,
                     const MCSubtargetInfo *STI) const override;
   void handleAssemblerFlag(MCAssemblerFlag Flag) override;
@@ -194,7 +196,7 @@ private:
   bool AllowOptimizations; // Allows the assembler to perform optimizations
                            // on written assembly.
 
-  static unsigned getRepeatBodyLength(const MCInst &Inst, MCAsmLayout &Layout);
+  static unsigned getRepeatBodyLength(const MCInst &Inst, MCAssembler const &Asm);
 };
 } // end anonymous namespace
 
@@ -257,9 +259,12 @@ bool ColossusMCAsmBackend::mayNeedRelaxation(const MCInst &Inst,
 
 // mayNeedRelaxation already called see MCAssembler::fragmentNeedsRelaxation
 // in MCAssembler.cpp
-bool ColossusMCAsmBackend::fixupNeedsRelaxation(
-    const MCFixup &Fixup, uint64_t Value, const MCRelaxableFragment *DF,
-    const MCAsmLayout &Layout) const {
+
+bool ColossusMCAsmBackend::fixupNeedsRelaxationAdvanced(const MCAssembler &Asm,
+      const MCFixup &Fixup, bool Resolved,
+      uint64_t Value,
+      const MCRelaxableFragment *DF,
+      const bool WasForced) const {
   assert(DF && "unexepected nullptr DF");
   // Section will be promoted to at least 8 byte aligned, so we can check if
   // the offset of the next instruction is 8 byte aligned, or if we need to
@@ -272,7 +277,7 @@ bool ColossusMCAsmBackend::fixupNeedsRelaxation(
     return false;
   }
 
-  auto nextOffset = Layout.getFragmentOffset(DF) + 8;
+  auto nextOffset = Asm.getFragmentOffset(*DF) + 8;
   return (nextOffset & 7) != 0;
 }
 
@@ -292,14 +297,14 @@ bool ColossusMCAsmBackend::needsRelaxableFragment(const MCInst &Inst) {
 }
 
 unsigned ColossusMCAsmBackend::getRepeatBodyLength(const MCInst &Inst,
-                                                   MCAsmLayout &Layout) {
+                                                   MCAssembler const &Asm) {
   auto &Operand = Inst.getOperand(1);
 
   // If it's an expression.
   if (Operand.isExpr()) {
     auto RptBodySize = Inst.getOperand(1).getExpr();
     MCValue Res;
-    if (RptBodySize->evaluateAsValue(Res, Layout)) {
+    if (RptBodySize->evaluateAsValue(Res, Asm)) {
       return (Res.getConstant() + 1) * 2;
     }
   }
@@ -314,19 +319,18 @@ unsigned ColossusMCAsmBackend::getRepeatBodyLength(const MCInst &Inst,
   return 0;
 }
 
-void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
-                                        MCAsmLayout &Layout) const {
+void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm) const {
   if (AllowInvalidRepeat) {
     return;
   }
 
-  MCContext &Context = Layout.getAssembler().getContext();
+  MCContext &Context = Asm.getContext();
   unsigned RptBodySize = 0;
 
   // Iterate over all fragments looking for `rpt` instructions.
   // When we find one, check it meets all of the restrictions and warn if not.
-  for (const auto Section : Layout.getSectionOrder()) {
-    for (auto &Fragment : Section->getFragmentList()) {
+  for (MCSection &Section : Asm) {
+    for (MCFragment &Fragment : Section) {
       switch (Fragment.getKind()) {
       default:
         RptBodySize = 0;
@@ -344,7 +348,7 @@ void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
       // rpt instruction
       case MCFragment::FT_Relaxable: {
         if (AllowOptimizations) {
-          Section->setAlignment(Align(8));
+          Section.setAlignment(Align(8));
         }
 
         auto &RF = cast<MCRelaxableFragment>(Fragment);
@@ -352,9 +356,9 @@ void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
         auto Opcode = Inst->getOpcode();
 
         if (ColossusMCInstrInfo::isRepeat(*Inst)) {
-          auto nextOffset = Layout.getFragmentOffset(&Fragment) +
+          auto nextOffset = Asm.getFragmentOffset(Fragment) +
                             (Opcode == TargetOpcode::BUNDLE ? 8 : 4);
-          if (Section->getAlign() < 8 || (nextOffset & 7) != 0) {
+          if (Section.getAlign() < 8 || (nextOffset & 7) != 0) {
             char const *message = Opcode == TargetOpcode::BUNDLE
                                       ? "code following rpt instruction is "
                                         "misaligned. Please add a "
@@ -371,7 +375,7 @@ void ColossusMCAsmBackend::finishLayout(MCAssembler const &Asm,
             if (Opcode == TargetOpcode::BUNDLE) {
               Inst = Inst->getOperand(0).getInst();
             }
-            RptBodySize = getRepeatBodyLength(*Inst, Layout) * 4;
+            RptBodySize = getRepeatBodyLength(*Inst, Asm) * 4;
           }
         }
       } break;

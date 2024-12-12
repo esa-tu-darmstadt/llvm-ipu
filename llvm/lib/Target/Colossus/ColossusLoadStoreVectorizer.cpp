@@ -1206,7 +1206,7 @@ bool Vectorizer::vectorizeStoreChain(
 
   StoreInst *SI = Builder.CreateAlignedStore(
     Vec,
-    Builder.CreateBitCast(S0->getPointerOperand(), VecTy->getPointerTo(AS)),
+    Builder.CreateBitCast(S0->getPointerOperand(), PointerType::get(VecTy, AS)),
     Alignment);
   propagateMetadata(SI, Chain);
 
@@ -1327,7 +1327,7 @@ bool Vectorizer::vectorizeLoadChain(
   Builder.SetInsertPoint(&*First);
 
   Value *Bitcast =
-      Builder.CreateBitCast(L0->getPointerOperand(), VecTy->getPointerTo(AS));
+      Builder.CreateBitCast(L0->getPointerOperand(), PointerType::get(VecTy, AS));
   LoadInst *LI =
       Builder.CreateAlignedLoad(VecTy, Bitcast, MaybeAlign(Alignment));
   propagateMetadata(LI, Chain);

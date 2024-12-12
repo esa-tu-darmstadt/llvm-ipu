@@ -75,6 +75,7 @@ private:
   const MachineDominatorTree *MDT = nullptr;
   const MachineLoopInfo *MLI = nullptr;
   const TargetInstrInfo *TII = nullptr;
+  const TargetRegisterInfo *TRI = nullptr;
 
   // After software pipelining, it's hard to retrieve the original
   // pre-pipelining preheader required to lower the cloops (guard is added to
@@ -100,8 +101,8 @@ public:
   StringRef getPassName() const override { return PASS_NAME; }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<MachineDominatorTree>();
-    AU.addRequired<MachineLoopInfo>();
+    AU.addRequired<MachineDominatorTreeWrapperPass>();
+    AU.addRequired<MachineLoopInfoWrapperPass>();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 };
@@ -109,8 +110,8 @@ public:
 char ColossusCountedLoopMIR::ID = 0;
 INITIALIZE_PASS_BEGIN(ColossusCountedLoopMIR, DEBUG_TYPE, PASS_NAME, false,
                       false)
-INITIALIZE_PASS_DEPENDENCY(MachineDominatorTree)
-INITIALIZE_PASS_DEPENDENCY(MachineLoopInfo)
+INITIALIZE_PASS_DEPENDENCY(MachineDominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MachineLoopInfoWrapperPass)
 INITIALIZE_PASS_END(ColossusCountedLoopMIR, DEBUG_TYPE, PASS_NAME, false, false)
 FunctionPass *llvm::createColossusCountedLoopMIRPass() {
   return new ColossusCountedLoopMIR();
@@ -493,7 +494,7 @@ void findLoopGuardPseudos(MachineBasicBlock *header,
 }
 
 bool isSafeToRemoveLoopGuard(MachineBasicBlock *header, MachineBasicBlock *body,
-                             MachineInstr *loopGuard) {
+                             MachineInstr *loopGuard, const TargetRegisterInfo &TRI) {
 
   MachineBasicBlock *loopGuardDest = loopGuard->getOperand(1).getMBB();
 
@@ -527,7 +528,7 @@ bool isSafeToRemoveLoopGuard(MachineBasicBlock *header, MachineBasicBlock *body,
          liveinI != loopGuardDest->livein_end(); ++liveinI) {
 
       MachineBasicBlock::RegisterMaskPair liveReg = *liveinI;
-      if (BBI->modifiesRegister(liveReg.PhysReg)) {
+      if (BBI->modifiesRegister(liveReg.PhysReg, &TRI)) {
         LLVM_DEBUG(
             dbgs() << "Cannot remove loop guard due to modified register\n");
         return false;
@@ -832,7 +833,7 @@ bool makeRptWithImm(MachineBasicBlock *header, MachineBasicBlock *body,
 
 void lowerToSimpleRpt(MachineBasicBlock *header, MachineBasicBlock *body,
                       SmallVectorImpl<MachineInstr *> &loopGuards,
-                      const TargetInstrInfo &TII) {
+                      const TargetInstrInfo &TII, const TargetRegisterInfo &TRI) {
   DebugLoc dl;
   assert(!bool(getMetricsForRpt(header, body).takeError()));
 
@@ -887,7 +888,7 @@ void lowerToSimpleRpt(MachineBasicBlock *header, MachineBasicBlock *body,
 
   // Remove cloop_guard_branch
   for (auto loopGuard : loopGuards) {
-    if (isSafeToRemoveLoopGuard(header, body, loopGuard)) {
+    if (isSafeToRemoveLoopGuard(header, body, loopGuard, TRI)) {
       LLVM_DEBUG(dbgs() << "Removing loop guard pseudo\n");
 
       MachineBasicBlock *loopGuardDest = loopGuard->getOperand(1).getMBB();
@@ -1237,7 +1238,7 @@ bool ColossusCountedLoopMIR::traverseLoop(MachineLoop &L) {
     };
 
     if (nopCount <= MaxNopCount || nopCount <= (bundleCount * NopThreshold)) {
-      lowerToSimpleRpt(Preheader, EndBranchBB, loopGuards, *TII);
+      lowerToSimpleRpt(Preheader, EndBranchBB, loopGuards, *TII, *TRI);
       if (isPipelined) {
         cleanPrologs(Preheader, EndBranchBB);
       }
@@ -1285,6 +1286,7 @@ bool ColossusCountedLoopMIR::traverseLoop(MachineLoop &L) {
 bool ColossusCountedLoopMIR::runOnMachineFunction(MachineFunction &mf) {
   auto &ST = mf.getSubtarget<ColossusSubtarget>();
   TII = ST.getInstrInfo();
+  TRI = ST.getRegisterInfo();
 
   if (!Colossus::CountedLoop::EnableMIR)
     return false;
@@ -1294,8 +1296,8 @@ bool ColossusCountedLoopMIR::runOnMachineFunction(MachineFunction &mf) {
 
   bool changed = false;
   PreheaderMap.clear();
-  MDT = &getAnalysis<MachineDominatorTree>();
-  MLI = &getAnalysis<MachineLoopInfo>();
+  MDT = &getAnalysis<MachineDominatorTreeWrapperPass>().getDomTree();
+  MLI = &getAnalysis<MachineLoopInfoWrapperPass>().getLI();
 
   // Cache the "original" preheaders if found.
   for (auto &L : *MLI)

@@ -104,8 +104,7 @@ public:
 
 private:
   // tblgen'erated function.
-  bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
-                                   const MachineInstr *MI);
+  bool lowerPseudoInstExpansion(const MachineInstr *MI, MCInst &Inst);
 };
 } // end of anonymous namespace
 
@@ -140,8 +139,9 @@ bool ColossusAsmPrinter::lowerOperand(const MachineOperand &MO,
 #include "ColossusGenMCPseudoLowering.inc"
 
 void ColossusAsmPrinter::emitInstruction(const MachineInstr *MI) {
-  // Do any auto-generated pseudo lowering.
-  if (emitPseudoExpansionLowering(*OutStreamer, MI)) {
+    // Do any auto-generated pseudo lowerings.
+  if (MCInst OutInst; lowerPseudoInstExpansion(MI, OutInst)) {
+    EmitToStreamer(*OutStreamer, OutInst);
     return;
   }
 

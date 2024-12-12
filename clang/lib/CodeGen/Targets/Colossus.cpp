@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ABIInfoImpl.h"
+#include "Address.h"
 #include "TargetInfo.h"
 
 #include "clang/Basic/TargetBuiltins.h"
@@ -25,8 +26,8 @@ namespace {
 class ColossusABIInfo : public DefaultABIInfo {
 public:
   ColossusABIInfo(CodeGen::CodeGenTypes &CGT) : DefaultABIInfo(CGT) {}
-  Address EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
-                    QualType Ty) const override;
+  RValue EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                    QualType Ty, AggValueSlot Slot) const override;
 };
 
 class ColossusTargetCodeGenInfo : public TargetCodeGenInfo {
@@ -97,8 +98,8 @@ public:
 };
 
 } // End anonymous namespace.
-Address ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
-                                   QualType Ty) const {
+RValue ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                                   QualType Ty, AggValueSlot Slot) const {
   CGBuilderTy &Builder = CGF.Builder;
 
   // Get the VAList.
@@ -147,7 +148,7 @@ Address ColossusABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
     Builder.CreateStore(APN.getBasePointer(), VAListAddr);
   }
 
-  return Val;
+  return CGF.EmitLoadOfAnyValue(CGF.MakeAddrLValue(Val, Ty), Slot);
 }
 
 std::unique_ptr<TargetCodeGenInfo>

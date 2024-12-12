@@ -141,25 +141,6 @@ bool link(ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
 } // namespace elf
 } // namespace lld
 
-// IPU local patch begin
-
-template <class T, unsigned N> void resetSmallVector(SmallVector<T, N> &v) {
-  auto addr = &v;
-  v.~SmallVector<T, N>();
-  new (addr) SmallVector<T, N>();
-}
-
-void elf::reset() {
-  resetSmallVector(outputSections);
-  resetSmallVector(ctx.binaryFiles);
-  resetSmallVector(ctx.bitcodeFiles);
-  resetSmallVector(ctx.lazyBitcodeFiles);
-  resetSmallVector(ctx.objectFiles);
-  resetSmallVector(ctx.sharedFiles);
-  partitions.shrink_to_fit();
-}
-// IPU local patch end
-
 // Parses a linker -m option.
 static std::tuple<ELFKind, uint16_t, uint8_t> parseEmulation(Ctx &ctx,
                                                              StringRef emul) {

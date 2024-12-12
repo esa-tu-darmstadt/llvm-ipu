@@ -736,7 +736,7 @@ std::optional<bool> ColossusAsmParser::ExpandMacroInstruction(MCInst &Inst,
   };
 }
 
-bool ColossusAsmParser::ParseInstruction(ParseInstructionInfo &Info,
+bool ColossusAsmParser::parseInstruction(ParseInstructionInfo &Info,
                                          StringRef Name, SMLoc NameLoc,
                                          OperandVector &Operands) {
   Operands.push_back(ColossusOperand::createToken(Name, NameLoc));
@@ -975,7 +975,7 @@ bool ColossusAsmParser::EmitInstruction(MCInst &Inst, MCStreamer &Out,
   return false;
 }
 
-bool ColossusAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
+bool ColossusAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                                 OperandVector &Operands,
                                                 MCStreamer &Out,
                                                 uint64_t &ErrorInfo,
@@ -989,7 +989,7 @@ bool ColossusAsmParser::MatchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       Operands.size() == 3) {
     StringRef Instr = ((ColossusOperand *)(&*Operands[0]))->getToken();
     ColossusOperand *ImmOp = (ColossusOperand *)(&*Operands[2]);
-    if (Instr.equals("call") && ImmOp->isImmzi<20>()) {
+    if (Instr == "call" && ImmOp->isImmzi<20>()) {
       ImmOp->setAllowInvalid();
       MatchResult = MatchInstructionImpl(Operands, Inst, ErrorInfo,
                                          MissingFeatures, MatchingInlineAsm);

@@ -221,7 +221,7 @@ bool ColossusLibmCalls::run() {
         // overload arity. For the libm intrinsics, this is always one
         Type *tmpTy[1] = {resTy};
         Function *intrin =
-            Intrinsic::getDeclaration(CI->getModule(), id, tmpTy);
+            Intrinsic::getOrInsertDeclaration(CI->getModule(), id, tmpTy);
         if (intrin) {
           if (StrictFP && intrin->isConstrainedFPIntrinsic()) {
             // Constrained intrinsic needs extra parameters to encode the
@@ -237,7 +237,7 @@ bool ColossusLibmCalls::run() {
             }
             auto *ExceptMDS = MDString::get(Ctx, "fpexcept.maytrap");
             Args.push_back(MetadataAsValue::get(Ctx, ExceptMDS));
-            CallInst *NewCI = CallInst::Create(IntrinTy, intrin, Args, "", CI);
+            CallInst *NewCI = CallInst::Create(IntrinTy, intrin, Args, "", CI->getIterator());
 
             // Rewire code to use this new CallInst.
             NewCI->takeName(CI);

@@ -112,7 +112,7 @@ static void computeFrameSize(MachineFunction &MF) {
 // If the stack has been realigned, we need BP to retrieve any incoming args
 // If there are variable size locals, we need FP to retrieve local slots
 
-bool ColossusFrameLowering::hasFP(const MachineFunction &MF) const {
+bool ColossusFrameLowering::hasFPImpl(const MachineFunction &MF) const {
   if (MF.getTarget().Options.DisableFramePointerElim(MF)) {
     return true;
   }

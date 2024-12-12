@@ -90,25 +90,29 @@ copyPhysReg(MachineBasicBlock &MBB,
             const DebugLoc &DL,
             MCRegister DestReg,
             MCRegister SrcReg,
-            bool KillSrc) const {
-  auto MtoM = [&](unsigned src, unsigned dst,
+            bool KillSrc, 
+            bool RenamableDest, 
+            bool RenamableSrc) const {
+  auto MtoM = [&](MCRegister src, MCRegister dst,
                   unsigned super = Colossus::NoRegister) {
     auto MIB =
     BuildMI(MBB, I, DL, get(Colossus::OR_ZI), dst)
-        .addReg(src, getKillRegState(KillSrc))
+        .addReg(src, 
+          getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc))
         .addImm(0)
         .addImm(0 /* Coissue bit */);
     if (super != Colossus::NoRegister) {
       MIB.addReg(super, RegState::Implicit);
     }
   };
-  auto AtoM = [&](unsigned src, unsigned dst,
-                  unsigned super = Colossus::NoRegister) {
+  auto AtoM = [&](MCRegister src, MCRegister dst,
+                  MCRegister super = Colossus::NoRegister) {
     MachineFunction &MF = *MBB.getParent();
     auto &CST = static_cast<const ColossusSubtarget &>(MF.getSubtarget());
     static_cast<void>(CST);
     auto MIB = BuildMI(MBB, I, DL, get(ColossusATOM(CST)), dst)
-                   .addReg(src, getKillRegState(KillSrc))
+                   .addReg(src, 
+                    getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc))
                    .addImm(0 /* Coissue bit */);
     if (super != Colossus::NoRegister) {
       MIB.addReg(super, RegState::Implicit);
@@ -121,7 +125,8 @@ copyPhysReg(MachineBasicBlock &MBB,
   } else if (Colossus::ARRegClass.contains(DestReg, SrcReg)){
     // OR $aDst, $aSrc, 0
     BuildMI(MBB, I, DL, get(Colossus::OR_ZI_A), DestReg)
-        .addReg(SrcReg, getKillRegState(KillSrc))
+        .addReg(SrcReg, 
+          getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc))
         .addImm(0)
         .addImm(0 /* Coissue bit */);
   // M -> A
@@ -142,7 +147,8 @@ copyPhysReg(MachineBasicBlock &MBB,
     if (Offset >= 0 && isShiftedUInt<12, 2>(Offset)) {
       // Store.
       BuildMI(MBB, I, DL, get(ColossusST32_ZI(CST)))
-          .addReg(SrcReg, getKillRegState(KillSrc))
+          .addReg(SrcReg, 
+            getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc))
           .addReg(FrameReg)
           .addReg(Colossus::MZERO)
           .addImm(Offset / 4)
@@ -183,14 +189,14 @@ copyPhysReg(MachineBasicBlock &MBB,
     unsigned SrcRegHi = RI.getSubReg(SrcReg, Colossus::SubRegHi);
     if (Offset >= 0 && isShiftedUInt<12, 2>(Offset + 4)) {
       BuildMI(MBB, I, DL, get(ColossusST32_ZI(CST)))
-          .addReg(SrcRegLo, getKillRegState(KillSrc))
+          .addReg(SrcRegLo, getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc))
           .addReg(FrameReg)
           .addReg(Colossus::MZERO)
           .addImm(Offset / 4)
           .addImm(0 /* Coissue bit */)
           .addReg(SrcReg, RegState::Implicit);
       BuildMI(MBB, I, DL, get(ColossusST32_ZI(CST)))
-          .addReg(SrcRegHi, getKillRegState(KillSrc))
+          .addReg(SrcRegHi, getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc))
           .addReg(FrameReg)
           .addReg(Colossus::MZERO)
           .addImm((Offset / 4) + 1)
@@ -211,7 +217,7 @@ copyPhysReg(MachineBasicBlock &MBB,
   } else if (Colossus::ARPairRegClass.contains(DestReg, SrcReg)) {
     // OR64 $aDst:+1, $aSrc+1, $azeros
     BuildMI(MBB, I, DL, get(Colossus::OR64), DestReg)
-        .addReg(SrcReg, getKillRegState(KillSrc))
+        .addReg(SrcReg, getKillRegState(KillSrc) | getRenamableRegState(RenamableSrc))
         .addReg(Colossus::AZEROS)
         .addImm(0 /* Coissue bit */);
   // AA -> MM

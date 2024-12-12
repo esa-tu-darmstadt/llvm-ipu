@@ -1801,7 +1801,7 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     {
       llvm::TimeTraceScope timeScope("Finalize .eh_frame");
       // IPU local patch begin
-      if (!config->relocatable) {
+      if (!ctx.arg.relocatable) {
         // The relocatable guard is added as eh_frame is incompatible with
         // a relocatable link but is sometimes added by default
         // Patch to get relocatable links working for poplar

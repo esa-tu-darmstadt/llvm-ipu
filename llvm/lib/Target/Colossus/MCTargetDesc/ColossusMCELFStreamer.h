@@ -58,7 +58,6 @@ namespace llvm {
   MCStreamer *createColossusELFStreamer(Triple const &TT, MCContext &Context,
                                         std::unique_ptr<MCAsmBackend> &&MAB,
                                         std::unique_ptr<MCObjectWriter> &&OW,
-                                        std::unique_ptr<MCCodeEmitter> &&CE,
-                                        bool relaxAll);
+                                        std::unique_ptr<MCCodeEmitter> &&CE);
 }
 #endif // LLVM_LIB_TARGET_COLOSSUS_MCTARGETDESC_COLOSSUSMCELFSTREAMER_H

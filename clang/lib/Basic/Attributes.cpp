@@ -161,6 +161,9 @@ getScopeFromNormalizedScopeName(StringRef ScopeName) {
   return llvm::StringSwitch<AttributeCommonInfo::Scope>(ScopeName)
       .Case("", AttributeCommonInfo::Scope::NONE)
       .Case("clang", AttributeCommonInfo::Scope::CLANG)
+// IPU local patch begin
+      .Case("colossus", AttributeCommonInfo::Scope::COLOSSUS)
+// IPU local patch end
       .Case("gnu", AttributeCommonInfo::Scope::GNU)
       .Case("gsl", AttributeCommonInfo::Scope::GSL)
       .Case("hlsl", AttributeCommonInfo::Scope::HLSL)

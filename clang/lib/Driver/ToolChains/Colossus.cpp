@@ -72,7 +72,7 @@ void tools::colossus::Link::ConstructJob(Compilation &C, const JobAction &JA,
   SmallString<128> LibBaseDir;
   SmallString<128> SupervisorLibBaseDir;
   if (C.getSysRoot().empty()) {
-    LibBaseDir = Driver.getInstalledDir();
+    LibBaseDir = Driver.Dir;
     llvm::sys::path::append(LibBaseDir, "..", "colossus");
     SupervisorLibBaseDir = LibBaseDir;
     llvm::sys::path::append(SupervisorLibBaseDir, "supervisor", "lib");
@@ -160,9 +160,7 @@ ColossusToolChain::ColossusToolChain(const Driver &D,
                                      const ArgList &Args)
     : ToolChain(D, Triple, Args) {
   supervisor_ = Args.hasArg(options::OPT_msupervisor);
-  getProgramPaths().push_back(getDriver().getInstalledDir());
-  if (getDriver().getInstalledDir() != getDriver().Dir)
-    getProgramPaths().push_back(getDriver().Dir);
+  getProgramPaths().push_back(getDriver().Dir);
 }
 
 Tool *ColossusToolChain::buildLinker() const {
@@ -193,7 +191,7 @@ void ColossusToolChain::AddClangSystemIncludeArgs(
 
   // ../colossus/include
   if (!NoStdlibInc) {
-    SmallString<128> IncDir(getDriver().getInstalledDir());
+    SmallString<128> IncDir(getDriver().Dir);
     llvm::sys::path::append(IncDir, "..", "colossus", "include");
     addSystemInclude(DriverArgs, CC1Args, IncDir.str());
   }
